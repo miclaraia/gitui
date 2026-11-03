@@ -62,10 +62,10 @@ impl DrawableComponent for TagListPopup {
 			let area = ui::centered_rect(
 				PERCENT_SIZE.width,
 				PERCENT_SIZE.height,
-				f.size(),
+				f.area(),
 			);
 			let area =
-				ui::rect_inside(MIN_SIZE, f.size().into(), area);
+				ui::rect_inside(MIN_SIZE, f.area().into(), area);
 			let area = area.intersection(rect);
 
 			let tag_name_width =
@@ -92,10 +92,9 @@ impl DrawableComponent for TagListPopup {
 			let rows = self.get_rows();
 			let number_of_rows = rows.len();
 
-			let table = Table::new(rows)
-				.widths(&constraints)
+			let table = Table::new(rows, constraints)
 				.column_spacing(1)
-				.highlight_style(self.theme.text(true, true))
+				.row_highlight_style(self.theme.text(true, true))
 				.block(
 					Block::default()
 						.borders(Borders::ALL)
@@ -112,7 +111,7 @@ impl DrawableComponent for TagListPopup {
 			f.render_widget(Clear, area);
 			f.render_stateful_widget(table, area, &mut table_state);
 
-			let area = area.inner(&Margin {
+			let area = area.inner(Margin {
 				vertical: 1,
 				horizontal: 0,
 			});
@@ -313,8 +312,7 @@ impl TagListPopup {
 
 		self.has_remotes =
 			sync::get_branches_info(&self.repo.borrow(), false)
-				.map(|branches| !branches.is_empty())
-				.unwrap_or(false);
+				.is_ok_and(|branches| !branches.is_empty());
 
 		let basic_credential = if self.has_remotes {
 			if need_username_password(&self.repo.borrow())? {
@@ -375,7 +373,7 @@ impl TagListPopup {
 		Ok(())
 	}
 
-	pub fn update_missing_remote_tags(&mut self) {
+	pub fn update_missing_remote_tags(&self) {
 		if self.has_remotes {
 			self.async_remote_tags.spawn(AsyncRemoteTagsJob::new(
 				self.repo.borrow().clone(),
@@ -385,7 +383,7 @@ impl TagListPopup {
 	}
 
 	///
-	fn move_selection(&mut self, scroll_type: ScrollType) -> bool {
+	fn move_selection(&self, scroll_type: ScrollType) -> bool {
 		let mut table_state = self.table_state.take();
 
 		let old_selection = table_state.selected().unwrap_or(0);
@@ -434,14 +432,14 @@ impl TagListPopup {
 	}
 
 	///
-	fn get_rows(&self) -> Vec<Row> {
+	fn get_rows(&self) -> Vec<Row<'_>> {
 		self.tags.as_ref().map_or_else(Vec::new, |tags| {
 			tags.iter().map(|tag| self.get_row(tag)).collect()
 		})
 	}
 
 	///
-	fn get_row(&self, tag: &TagWithMetadata) -> Row {
+	fn get_row(&self, tag: &TagWithMetadata) -> Row<'_> {
 		const UPSTREAM_SYMBOL: &str = "\u{2191}";
 		const ATTACHMENT_SYMBOL: &str = "@";
 		const EMPTY_SYMBOL: &str = " ";
@@ -449,7 +447,7 @@ impl TagListPopup {
 		let is_tag_missing_on_remote = self
 			.missing_remote_tags
 			.as_ref()
-			.map_or(false, |missing_remote_tags| {
+			.is_some_and(|missing_remote_tags| {
 				let remote_tag = format!("refs/tags/{}", tag.name);
 
 				missing_remote_tags.contains(&remote_tag)
@@ -461,7 +459,7 @@ impl TagListPopup {
 			EMPTY_SYMBOL
 		};
 
-		let has_attachement_str = if tag.annotation.is_some() {
+		let has_attachment_str = if tag.annotation.is_some() {
 			ATTACHMENT_SYMBOL
 		} else {
 			EMPTY_SYMBOL
@@ -476,7 +474,7 @@ impl TagListPopup {
 				.style(self.theme.commit_time(false)),
 			Cell::from(tag.author.clone())
 				.style(self.theme.commit_author(false)),
-			Cell::from(has_attachement_str)
+			Cell::from(has_attachment_str)
 				.style(self.theme.text_danger()),
 			Cell::from(tag.message.clone())
 				.style(self.theme.text(true, false)),

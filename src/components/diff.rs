@@ -152,6 +152,10 @@ impl DiffComponent {
 		(self.current.path.clone(), self.current.is_stage)
 	}
 	///
+	const fn can_edit_file(&self) -> bool {
+		!self.is_immutable && !self.current.path.is_empty()
+	}
+	///
 	pub fn clear(&mut self, pending: bool) {
 		self.current = Current::default();
 		self.diff = None;
@@ -324,7 +328,7 @@ impl DiffComponent {
 		None
 	}
 
-	fn get_text(&self, width: u16, height: u16) -> Vec<Line> {
+	fn get_text(&self, width: u16, height: u16) -> Vec<Line<'_>> {
 		if let Some(diff) = &self.diff {
 			return if diff.hunks.is_empty() {
 				self.get_text_binary(diff)
@@ -339,9 +343,7 @@ impl DiffComponent {
 
 				for (i, hunk) in diff.hunks.iter().enumerate() {
 					let hunk_selected = self.focused()
-						&& self
-							.selected_hunk
-							.map_or(false, |s| s == i);
+						&& self.selected_hunk.is_some_and(|s| s == i);
 
 					if lines_added >= height as usize {
 						break;
@@ -389,7 +391,7 @@ impl DiffComponent {
 		vec![]
 	}
 
-	fn get_text_binary(&self, diff: &FileDiff) -> Vec<Line> {
+	fn get_text_binary(&self, diff: &FileDiff) -> Vec<Line<'_>> {
 		let is_positive = diff.size_delta >= 0;
 		let delta_byte_size =
 			ByteSize::b(diff.size_delta.unsigned_abs());
@@ -496,7 +498,7 @@ impl DiffComponent {
 		false
 	}
 
-	fn unstage_hunk(&mut self) -> Result<()> {
+	fn unstage_hunk(&self) -> Result<()> {
 		if let Some(diff) = &self.diff {
 			if let Some(hunk) = self.selected_hunk {
 				let hash = diff.hunks[hunk].header_hash;
@@ -513,7 +515,7 @@ impl DiffComponent {
 		Ok(())
 	}
 
-	fn stage_hunk(&mut self) -> Result<()> {
+	fn stage_hunk(&self) -> Result<()> {
 		if let Some(diff) = &self.diff {
 			if let Some(hunk) = self.selected_hunk {
 				if diff.untracked {
@@ -621,7 +623,7 @@ impl DiffComponent {
 		)));
 	}
 
-	fn stage_unstage_hunk(&mut self) -> Result<()> {
+	fn stage_unstage_hunk(&self) -> Result<()> {
 		if self.current.is_stage {
 			self.unstage_hunk()?;
 		} else {
@@ -773,6 +775,11 @@ impl Component for DiffComponent {
 
 		if !self.is_immutable {
 			out.push(CommandInfo::new(
+				strings::commands::edit_item(&self.key_config),
+				self.can_edit_file(),
+				self.focused() && self.can_edit_file(),
+			));
+			out.push(CommandInfo::new(
 				strings::commands::diff_hunk_remove(&self.key_config),
 				self.selected_hunk.is_some(),
 				self.focused() && self.is_stage(),
@@ -878,6 +885,15 @@ impl Component for DiffComponent {
 				) {
 					self.diff_hunk_move_up_down(-1);
 					Ok(EventState::Consumed)
+				} else if key_match(e, self.key_config.keys.edit_file)
+					&& self.can_edit_file()
+				{
+					self.queue.push(
+						InternalEvent::OpenExternalEditor(Some(
+							self.current.path.clone(),
+						)),
+					);
+					Ok(EventState::Consumed)
 				} else if key_match(
 					e,
 					self.key_config.keys.stage_unstage_item,
@@ -947,7 +963,10 @@ impl Component for DiffComponent {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::ui::style::Theme;
+	use crate::{
+		app::Environment, queue::InternalEvent, ui::style::Theme,
+	};
+	use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 	use std::io::Write;
 	use std::rc::Rc;
 	use tempfile::NamedTempFile;
@@ -1013,5 +1032,31 @@ mod tests {
 				)
 			);
 		}
+	}
+
+	#[test]
+	fn diff_component_opens_editor_for_current_file() {
+		let env = Environment::test_env();
+		let mut diff = DiffComponent::new(&env, false);
+
+		diff.focus(true);
+		diff.current.path = String::from("src/main.rs");
+
+		let event = Event::Key(KeyEvent::new(
+			KeyCode::Char('e'),
+			KeyModifiers::empty(),
+		));
+
+		assert!(matches!(
+			diff.event(&event).unwrap(),
+			EventState::Consumed
+		));
+
+		let event = env.queue.pop();
+		assert!(matches!(
+			event,
+			Some(InternalEvent::OpenExternalEditor(Some(path)))
+				if path == "src/main.rs"
+		));
 	}
 }

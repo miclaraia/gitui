@@ -1,4 +1,7 @@
-use super::{commit_files::get_commit_diff, CommitId};
+use super::{
+	commit_details::get_author_of_commit,
+	commit_files::get_commit_diff, CommitId,
+};
 use crate::error::Result;
 use bitflags::bitflags;
 use fuzzy_matcher::FuzzyMatcher;
@@ -159,6 +162,7 @@ pub fn filter_commit_by_search(
 		move |repo: &Repository,
 		      commit_id: &CommitId|
 		      -> Result<bool> {
+			let mailmap = repo.mailmap()?;
 			let commit = repo.find_commit((*commit_id).into())?;
 
 			let msg_summary_match = filter
@@ -166,7 +170,11 @@ pub fn filter_commit_by_search(
 				.fields
 				.contains(SearchFields::MESSAGE_SUMMARY)
 				.then(|| {
-					commit.summary().map(|msg| filter.match_text(msg))
+					commit
+						.summary()
+						.ok()
+						.flatten()
+						.map(|msg| filter.match_text(msg))
 				})
 				.flatten()
 				.unwrap_or_default();
@@ -176,7 +184,11 @@ pub fn filter_commit_by_search(
 				.fields
 				.contains(SearchFields::MESSAGE_BODY)
 				.then(|| {
-					commit.body().map(|msg| filter.match_text(msg))
+					commit
+						.body()
+						.ok()
+						.flatten()
+						.map(|msg| filter.match_text(msg))
 				})
 				.flatten()
 				.unwrap_or_default();
@@ -194,27 +206,27 @@ pub fn filter_commit_by_search(
 				.flatten()
 				.is_some_and(|diff| filter.match_diff(&diff));
 
-			let authors_match = filter
+			let authors_match = if filter
 				.options
 				.fields
 				.contains(SearchFields::AUTHORS)
-				.then(|| {
-					let name_match = commit
-						.author()
-						.name()
-						.is_some_and(|name| filter.match_text(name));
-					let mail_match = commit
-						.author()
-						.email()
-						.is_some_and(|name| filter.match_text(name));
-
-					name_match || mail_match
-				})
-				.unwrap_or_default();
+			{
+				let author = get_author_of_commit(&commit, &mailmap);
+				[author.email(), author.name()].iter().any(
+					|opt_haystack| {
+						opt_haystack.as_ref().is_ok_and(|haystack| {
+							filter.match_text(haystack)
+						})
+					},
+				)
+			} else {
+				false
+			};
 
 			Ok(msg_summary_match
 				|| msg_body_match
-				|| file_match || authors_match)
+				|| file_match
+				|| authors_match)
 		},
 	))
 }

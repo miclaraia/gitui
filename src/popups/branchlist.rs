@@ -21,8 +21,9 @@ use asyncgit::{
 			checkout_remote_branch, BranchDetails, LocalBranch,
 			RemoteBranch,
 		},
-		checkout_branch, get_branches_info, BranchInfo, BranchType,
-		CommitId, RepoPathRef, RepoState,
+		checkout_branch, get_branches_info,
+		status::StatusType,
+		BranchInfo, BranchType, CommitId, RepoPathRef, RepoState,
 	},
 	AsyncGitNotification,
 };
@@ -66,10 +67,10 @@ impl DrawableComponent for BranchListPopup {
 			let area = ui::centered_rect(
 				PERCENT_SIZE.width,
 				PERCENT_SIZE.height,
-				f.size(),
+				f.area(),
 			);
 			let area =
-				ui::rect_inside(MIN_SIZE, f.size().into(), area);
+				ui::rect_inside(MIN_SIZE, f.area().into(), area);
 			let area = area.intersection(rect);
 
 			f.render_widget(Clear, area);
@@ -82,7 +83,7 @@ impl DrawableComponent for BranchListPopup {
 				area,
 			);
 
-			let area = area.inner(&Margin {
+			let area = area.inner(Margin {
 				vertical: 1,
 				horizontal: 1,
 			});
@@ -116,117 +117,7 @@ impl Component for BranchListPopup {
 				out.clear();
 			}
 
-			let selection_is_cur_branch =
-				self.selection_is_cur_branch();
-
-			out.push(CommandInfo::new(
-				strings::commands::scroll(&self.key_config),
-				true,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::close_popup(&self.key_config),
-				true,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::commit_details_open(
-					&self.key_config,
-				),
-				true,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::compare_with_head(
-					&self.key_config,
-				),
-				!selection_is_cur_branch,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::toggle_branch_popup(
-					&self.key_config,
-					self.local,
-				),
-				true,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::select_branch_popup(
-					&self.key_config,
-				),
-				!selection_is_cur_branch && self.valid_selection(),
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::open_branch_create_popup(
-					&self.key_config,
-				),
-				true,
-				self.local,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::delete_branch_popup(
-					&self.key_config,
-				),
-				!selection_is_cur_branch,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::merge_branch_popup(
-					&self.key_config,
-				),
-				!selection_is_cur_branch,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::branch_popup_rebase(
-					&self.key_config,
-				),
-				!selection_is_cur_branch,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::rename_branch_popup(
-					&self.key_config,
-				),
-				true,
-				self.local,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::fetch_remotes(&self.key_config),
-				self.has_remotes,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::find_branch(&self.key_config),
-				true,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::sort_branch(&self.key_config),
-				true,
-				true,
-			));
-
-			out.push(CommandInfo::new(
-				strings::commands::reset_branch(&self.key_config),
-				self.valid_selection(),
-				true,
-			));
+			self.add_commands_internal(out);
 		}
 		visibility_blocking(self)
 	}
@@ -304,6 +195,9 @@ impl Component for BranchListPopup {
 				&& self.has_remotes
 			{
 				self.queue.push(InternalEvent::FetchRemotes);
+			} else if key_match(e, self.key_config.keys.view_remotes)
+			{
+				self.queue.push(InternalEvent::ViewRemotes);
 			} else if key_match(e, self.key_config.keys.reset_branch)
 			{
 				if let Some(commit_id) = self.get_selected_commit() {
@@ -423,8 +317,7 @@ impl BranchListPopup {
 		if self.visible {
 			self.has_remotes =
 				get_branches_info(&self.repo.borrow(), false)
-					.map(|branches| !branches.is_empty())
-					.unwrap_or(false);
+					.is_ok_and(|branches| !branches.is_empty());
 		}
 	}
 
@@ -542,7 +435,7 @@ impl BranchListPopup {
 		Ok(())
 	}
 
-	fn valid_selection(&self) -> bool {
+	const fn valid_selection(&self) -> bool {
 		!self.branches.is_empty()
 	}
 
@@ -714,7 +607,7 @@ impl BranchListPopup {
 		theme: &SharedTheme,
 		width_available: u16,
 		height: usize,
-	) -> Text {
+	) -> Text<'_> {
 		const UPSTREAM_SYMBOL: char = '\u{2191}';
 		const TRACKING_SYMBOL: char = '\u{2193}';
 		const HEAD_SYMBOL: char = '*';
@@ -804,7 +697,7 @@ impl BranchListPopup {
 				theme.commit_author(selected),
 			);
 			let span_msg = Span::styled(
-				commit_message.to_string(),
+				commit_message.clone(),
 				theme.text(true, selected),
 			);
 			let span_name = Span::styled(
@@ -829,32 +722,46 @@ impl BranchListPopup {
 			anyhow::bail!("no valid branch selected");
 		}
 
-		if self.local {
-			checkout_branch(
-				&self.repo.borrow(),
-				&self.branches[self.selection as usize].name,
-			)?;
-			self.hide();
-		} else {
-			checkout_remote_branch(
-				&self.repo.borrow(),
-				&self.branches[self.selection as usize],
-			)?;
-			self.local = true;
-			self.update_branches()?;
-		}
+		let status = sync::status::get_status(
+			&self.repo.borrow(),
+			StatusType::WorkingDir,
+			None,
+		)
+		.expect("Could not get status");
 
-		self.queue.push(InternalEvent::Update(NeedsUpdate::ALL));
+		let selected_branch = &self.branches[self.selection as usize];
+		if status.is_empty() {
+			if self.local {
+				checkout_branch(
+					&self.repo.borrow(),
+					&selected_branch.name,
+				)?;
+				self.hide();
+			} else {
+				checkout_remote_branch(
+					&self.repo.borrow(),
+					selected_branch,
+				)?;
+				self.local = true;
+				self.update_branches()?;
+			}
+			self.queue.push(InternalEvent::Update(NeedsUpdate::ALL));
+		} else {
+			self.queue.push(InternalEvent::CheckoutOption(
+				selected_branch.clone(),
+			));
+		}
 
 		Ok(())
 	}
 
 	fn draw_tabs(&self, f: &mut Frame, r: Rect) {
-		let tabs = [Span::raw("Local"), Span::raw("Remote")]
-			.iter()
-			.cloned()
-			.map(Line::from)
-			.collect();
+		let tabs: Vec<Line> =
+			[Span::raw("Local"), Span::raw("Remote")]
+				.iter()
+				.cloned()
+				.map(Line::from)
+				.collect();
 
 		f.render_widget(
 			Tabs::new(tabs)
@@ -901,7 +808,7 @@ impl BranchListPopup {
 		Ok(())
 	}
 
-	fn rename_branch(&mut self) {
+	fn rename_branch(&self) {
 		let cur_branch = &self.branches[self.selection as usize];
 		self.queue.push(InternalEvent::RenameBranch(
 			cur_branch.reference.clone(),
@@ -909,7 +816,7 @@ impl BranchListPopup {
 		));
 	}
 
-	fn delete_branch(&mut self) {
+	fn delete_branch(&self) {
 		let reference =
 			self.branches[self.selection as usize].reference.clone();
 
@@ -919,6 +826,111 @@ impl BranchListPopup {
 			} else {
 				Action::DeleteRemoteBranch(reference)
 			},
+		));
+	}
+
+	fn add_commands_internal(&self, out: &mut Vec<CommandInfo>) {
+		let selection_is_cur_branch = self.selection_is_cur_branch();
+
+		out.push(CommandInfo::new(
+			strings::commands::scroll(&self.key_config),
+			true,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::close_popup(&self.key_config),
+			true,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::commit_details_open(&self.key_config),
+			true,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::compare_with_head(&self.key_config),
+			!selection_is_cur_branch,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::toggle_branch_popup(
+				&self.key_config,
+				self.local,
+			),
+			true,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::select_branch_popup(&self.key_config),
+			!selection_is_cur_branch && self.valid_selection(),
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::open_branch_create_popup(
+				&self.key_config,
+			),
+			true,
+			self.local,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::delete_branch_popup(&self.key_config),
+			!selection_is_cur_branch,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::merge_branch_popup(&self.key_config),
+			!selection_is_cur_branch,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::branch_popup_rebase(&self.key_config),
+			!selection_is_cur_branch,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::rename_branch_popup(&self.key_config),
+			true,
+			self.local,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::fetch_remotes(&self.key_config),
+			self.has_remotes,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::find_branch(&self.key_config),
+			true,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::sort_branch(&self.key_config),
+			true,
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::reset_branch(&self.key_config),
+			self.valid_selection(),
+			true,
+		));
+
+		out.push(CommandInfo::new(
+			strings::commands::view_remotes(&self.key_config),
+			true,
+			self.has_remotes,
 		));
 	}
 }

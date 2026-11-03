@@ -156,12 +156,12 @@ mod tests {
 
 	#[test]
 	fn test_sorting() {
-		let mut list = vec!["file", "folder/file", "folder/afile"]
+		let mut list = ["file", "folder/file", "folder/afile"]
 			.iter()
 			.map(|f| TreeFile {
 				path: PathBuf::from(f),
 				filemode: 0,
-				id: Oid::zero(),
+				id: Oid::ZERO_SHA1,
 			})
 			.collect::<Vec<_>>();
 
@@ -181,12 +181,12 @@ mod tests {
 
 	#[test]
 	fn test_sorting_folders() {
-		let mut list = vec!["bfolder/file", "afolder/file"]
+		let mut list = ["bfolder/file", "afolder/file"]
 			.iter()
 			.map(|f| TreeFile {
 				path: PathBuf::from(f),
 				filemode: 0,
-				id: Oid::zero(),
+				id: Oid::ZERO_SHA1,
 			})
 			.collect::<Vec<_>>();
 
@@ -205,12 +205,12 @@ mod tests {
 
 	#[test]
 	fn test_sorting_folders2() {
-		let mut list = vec!["bfolder/sub/file", "afolder/file"]
+		let mut list = ["bfolder/sub/file", "afolder/file"]
 			.iter()
 			.map(|f| TreeFile {
 				path: PathBuf::from(f),
 				filemode: 0,
-				id: Oid::zero(),
+				id: Oid::ZERO_SHA1,
 			})
 			.collect::<Vec<_>>();
 

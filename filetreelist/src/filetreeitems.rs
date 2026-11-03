@@ -7,7 +7,6 @@ use crate::{error::Result, treeitems_iter::TreeItemsIterator};
 use std::{
 	collections::{BTreeSet, HashMap},
 	path::{Path, PathBuf},
-	usize,
 };
 
 ///
@@ -60,7 +59,7 @@ impl FileTreeItems {
 	}
 
 	/// how many individual items (files/paths) are in the list
-	pub fn len(&self) -> usize {
+	pub const fn len(&self) -> usize {
 		self.tree_items.len()
 	}
 
@@ -145,8 +144,6 @@ impl FileTreeItems {
 				let item_path =
 					Path::new(item.info().full_path_str());
 
-				//TODO: fix once FP in clippy is fixed
-				#[allow(clippy::needless_borrow)]
 				if item_path.starts_with(&path) {
 					item.hide();
 				} else {
@@ -183,7 +180,7 @@ impl FileTreeItems {
 			}
 
 			self.update_visibility(
-				&Some(full_path),
+				Some(full_path).as_ref(),
 				index + 1,
 				false,
 			);
@@ -276,7 +273,7 @@ impl FileTreeItems {
 
 	fn update_visibility(
 		&mut self,
-		prefix: &Option<PathBuf>,
+		prefix: Option<&PathBuf>,
 		start_idx: usize,
 		set_defaults: bool,
 	) {
@@ -312,7 +309,7 @@ impl FileTreeItems {
 
 			if prefix
 				.as_ref()
-				.map_or(true, |prefix| item_path.starts_with(prefix))
+				.is_none_or(|prefix| item_path.starts_with(prefix))
 			{
 				self.tree_items[i].info_mut().set_visible(true);
 			} else {

@@ -16,9 +16,9 @@ use asyncgit::{
 			extract_username_password_for_push,
 			need_username_password_for_push, BasicAuthCredential,
 		},
-		get_branch_remote,
+		get_branch_remote, hooks_pre_push,
 		remotes::get_default_remote_for_push,
-		RepoPathRef,
+		HookResult, RepoPathRef,
 	},
 	AsyncGitNotification, AsyncPush, PushRequest, PushType,
 	RemoteProgress, RemoteProgressState,
@@ -144,6 +144,26 @@ impl PushPopup {
 			remote
 		};
 
+		// run pre push hook - can reject push
+		let repo = self.repo.borrow();
+		if let HookResult::NotOk(e) = hooks_pre_push(
+			&repo,
+			&remote,
+			&asyncgit::sync::PrePushTarget::Branch {
+				branch: &self.branch,
+				delete: self.modifier.delete(),
+			},
+			cred.clone(),
+		)? {
+			log::error!("pre-push hook failed: {e}");
+			self.queue.push(InternalEvent::ShowErrorMsg(format!(
+				"pre-push hook failed:\n{e}"
+			)));
+			self.pending = false;
+			self.visible = false;
+			return Ok(());
+		}
+
 		self.pending = true;
 		self.progress = None;
 		self.git_push.request(PushRequest {
@@ -193,10 +213,10 @@ impl PushPopup {
 
 	///
 	pub fn get_progress(
-		progress: &Option<RemoteProgress>,
+		progress: Option<&RemoteProgress>,
 	) -> (String, u8) {
-		progress.as_ref().map_or(
-			(strings::PUSH_POPUP_PROGRESS_NONE.into(), 0),
+		progress.as_ref().map_or_else(
+			|| (strings::PUSH_POPUP_PROGRESS_NONE.into(), 0),
 			|progress| {
 				(
 					Self::progress_state_name(&progress.state),
@@ -232,9 +252,9 @@ impl DrawableComponent for PushPopup {
 	fn draw(&self, f: &mut Frame, rect: Rect) -> Result<()> {
 		if self.visible {
 			let (state, progress) =
-				Self::get_progress(&self.progress);
+				Self::get_progress(self.progress.as_ref());
 
-			let area = ui::centered_rect_absolute(30, 3, f.size());
+			let area = ui::centered_rect_absolute(30, 3, f.area());
 
 			f.render_widget(Clear, area);
 			f.render_widget(

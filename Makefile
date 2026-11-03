@@ -1,5 +1,5 @@
 
-.PHONY: debug build-release release-linux-musl test clippy clippy-pedantic install install-debug
+.PHONY: debug build-release release-linux-musl test clippy clippy-pedantic install install-debug sort
 
 ARGS=-l
 # ARGS=-l -d ~/code/extern/kubernetes
@@ -26,10 +26,18 @@ release-mac: build-release
 	tar -C ./target/release/ -czvf ./release/gitui-mac.tar.gz ./gitui
 	ls -lisah ./release/gitui-mac.tar.gz
 
+release-mac-x86: build-apple-x86-release
+	strip target/x86_64-apple-darwin/release/gitui
+	otool -L target/x86_64-apple-darwin/release/gitui
+	ls -lisah target/x86_64-apple-darwin/release/gitui
+	mkdir -p release
+	tar -C ./target/x86_64-apple-darwin/release/ -czvf ./release/gitui-mac-x86.tar.gz ./gitui
+	ls -lisah ./release/gitui-mac-x86.tar.gz
+
 release-win: build-release
 	mkdir -p release
 	tar -C ./target/release/ -czvf ./release/gitui-win.tar.gz ./gitui.exe
-	cargo install cargo-wix --version 0.3.3
+	cargo install cargo-wix --version 0.3.3 --locked
 	cargo wix -p gitui --no-build --nocapture --output ./release/gitui-win.msi
 	ls -l ./release/gitui-win.msi
 
@@ -38,14 +46,28 @@ release-linux-musl: build-linux-musl-release
 	mkdir -p release
 	tar -C ./target/x86_64-unknown-linux-musl/release/ -czvf ./release/gitui-linux-x86_64.tar.gz ./gitui
 
+build-apple-x86-debug:
+	cargo build --target=x86_64-apple-darwin
+
+build-apple-x86-release:
+	cargo build --release --target=x86_64-apple-darwin --locked
+
 build-linux-musl-debug:
 	cargo build --target=x86_64-unknown-linux-musl
 
 build-linux-musl-release:
-	cargo build --release --target=x86_64-unknown-linux-musl
+	cargo build --release --target=x86_64-unknown-linux-musl --locked
 
 test-linux-musl:
-	cargo test --workspace --target=x86_64-unknown-linux-musl
+	cargo nextest run --workspace --target=x86_64-unknown-linux-musl
+
+# aarch64 test binaries are cross-compiled, so CI runs them under qemu via a
+# CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER (see .github/workflows/ci.yml).
+# Exclude test_hook_with_missing_shebang: it needs the kernel's ENOEXEC (so
+# gitui retries the hook via `sh`), which qemu-user doesn't emulate — the exec
+# just exits 127. It passes on real aarch64 hardware.
+test-linux-arm:
+	cargo nextest run --workspace --target=aarch64-unknown-linux-gnu -E 'not test(test_hook_with_missing_shebang)'
 
 release-linux-arm: build-linux-arm-release
 	mkdir -p release
@@ -64,12 +86,12 @@ build-linux-arm-debug:
 	cargo build --target=arm-unknown-linux-gnueabihf
 
 build-linux-arm-release:
-	cargo build --release --target=aarch64-unknown-linux-gnu
-	cargo build --release --target=armv7-unknown-linux-gnueabihf
-	cargo build --release --target=arm-unknown-linux-gnueabihf
+	cargo build --release --target=aarch64-unknown-linux-gnu --locked
+	cargo build --release --target=armv7-unknown-linux-gnueabihf --locked
+	cargo build --release --target=arm-unknown-linux-gnueabihf --locked
 
 test:
-	cargo test --workspace
+	cargo nextest run --workspace
 
 fmt:
 	cargo fmt -- --check
@@ -80,7 +102,7 @@ clippy:
 clippy-nightly:
 	cargo +nightly clippy --workspace --all-features
 
-check: fmt clippy test deny
+check: fmt clippy test sort deny
 
 check-nightly:
 	cargo +nightly c
@@ -89,6 +111,9 @@ check-nightly:
 
 deny:
 	cargo deny check
+
+sort:
+	tombi format --check
 
 install:
 	cargo install --path "." --offline --locked

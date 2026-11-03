@@ -10,18 +10,10 @@ use crossbeam_channel::Sender;
 use std::{
 	hash::Hash,
 	sync::{
-		atomic::{AtomicUsize, Ordering},
+		atomic::{AtomicU64, AtomicUsize, Ordering},
 		Arc, Mutex,
 	},
-	time::{SystemTime, UNIX_EPOCH},
 };
-
-fn current_tick() -> u128 {
-	SystemTime::now()
-		.duration_since(UNIX_EPOCH)
-		.expect("time before unix epoch!")
-		.as_millis()
-}
 
 #[derive(Default, Hash, Clone)]
 pub struct Status {
@@ -31,19 +23,17 @@ pub struct Status {
 ///
 #[derive(Default, Hash, Copy, Clone, PartialEq, Eq)]
 pub struct StatusParams {
-	tick: u128,
 	status_type: StatusType,
 	config: Option<ShowUntrackedFilesConfig>,
 }
 
 impl StatusParams {
 	///
-	pub fn new(
+	pub const fn new(
 		status_type: StatusType,
 		config: Option<ShowUntrackedFilesConfig>,
 	) -> Self {
 		Self {
-			tick: current_tick(),
 			status_type,
 			config,
 		}
@@ -59,6 +49,8 @@ pub struct AsyncStatus {
 	sender: Sender<AsyncGitNotification>,
 	pending: Arc<AtomicUsize>,
 	repo: RepoPath,
+	/// Counter that increments after each completed fetch.
+	generation: Arc<AtomicU64>,
 }
 
 impl AsyncStatus {
@@ -73,11 +65,12 @@ impl AsyncStatus {
 			last: Arc::new(Mutex::new(Status::default())),
 			sender,
 			pending: Arc::new(AtomicUsize::new(0)),
+			generation: Arc::new(AtomicU64::new(0)),
 		}
 	}
 
 	///
-	pub fn last(&mut self) -> Result<Status> {
+	pub fn last(&self) -> Result<Status> {
 		let last = self.last.lock()?;
 		Ok(last.clone())
 	}
@@ -89,7 +82,7 @@ impl AsyncStatus {
 
 	///
 	pub fn fetch(
-		&mut self,
+		&self,
 		params: &StatusParams,
 	) -> Result<Option<Status>> {
 		if self.is_pending() {
@@ -97,12 +90,14 @@ impl AsyncStatus {
 			return Ok(None);
 		}
 
-		let hash_request = hash(&params);
+		let generation = self.generation.load(Ordering::Relaxed);
+		let hash_request = hash(&(params, generation));
 
 		log::trace!(
-			"request: [hash: {}] (type: {:?})",
+			"request: [hash: {}] (type: {:?}, gen: {})",
 			hash_request,
 			params.status_type,
+			generation,
 		);
 
 		{
@@ -118,6 +113,7 @@ impl AsyncStatus {
 
 		let arc_current = Arc::clone(&self.current);
 		let arc_last = Arc::clone(&self.last);
+		let arc_generation = Arc::clone(&self.generation);
 		let sender = self.sender.clone();
 		let arc_pending = Arc::clone(&self.pending);
 		let status_type = params.status_type;
@@ -135,14 +131,17 @@ impl AsyncStatus {
 				&arc_current,
 				&arc_last,
 			) {
-				log::error!("fetch_helper: {}", e);
+				log::error!("fetch_helper: {e}");
 			}
 
+			// Increment generation to invalidate cache for next request
+			arc_generation.fetch_add(1, Ordering::Relaxed);
 			arc_pending.fetch_sub(1, Ordering::Relaxed);
 
-			sender
-				.send(AsyncGitNotification::Status)
-				.expect("error sending status");
+			if let Err(e) = sender.send(AsyncGitNotification::Status)
+			{
+				log::error!("send status error: {e}");
+			}
 		});
 
 		Ok(None)
@@ -158,9 +157,7 @@ impl AsyncStatus {
 	) -> Result<()> {
 		let res = Self::get_status(repo, status_type, config)?;
 		log::trace!(
-			"status fetched: {} (type: {:?})",
-			hash_request,
-			status_type,
+			"status fetched: {hash_request} (type: {status_type:?})",
 		);
 
 		{

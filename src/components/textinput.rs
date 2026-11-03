@@ -18,9 +18,9 @@ use ratatui::{
 	widgets::{Clear, Paragraph},
 	Frame,
 };
+use ratatui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
 use std::cell::Cell;
 use std::cell::OnceCell;
-use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
 
 ///
 #[derive(PartialEq, Eq)]
@@ -122,17 +122,17 @@ impl TextInputComponent {
 	}
 
 	/// screen area (last time we got drawn)
-	pub fn get_area(&self) -> Rect {
+	pub const fn get_area(&self) -> Rect {
 		self.current_area.get()
 	}
 
 	/// embed into parent draw area
-	pub fn embed(&mut self) {
+	pub const fn embed(&mut self) {
 		self.embed = true;
 	}
 
 	///
-	pub fn enabled(&mut self, enable: bool) {
+	pub const fn enabled(&mut self, enable: bool) {
 		self.selected = Some(enable);
 	}
 
@@ -176,7 +176,7 @@ impl TextInputComponent {
 						)
 						.title(self.title.clone()),
 				);
-			};
+			}
 			text_area
 		});
 	}
@@ -623,25 +623,25 @@ impl DrawableComponent for TextInputComponent {
 			let area = if self.embed {
 				rect
 			} else if self.input_type == InputType::Multiline {
-				let area = ui::centered_rect(60, 20, f.size());
+				let area = ui::centered_rect(60, 20, f.area());
 				ui::rect_inside(
 					Size::new(10, 3),
-					f.size().into(),
+					f.area().into(),
 					area,
 				)
 			} else {
-				let area = ui::centered_rect(60, 1, f.size());
+				let area = ui::centered_rect(60, 1, f.area());
 
 				ui::rect_inside(
 					Size::new(10, 3),
-					Size::new(f.size().width, 3),
+					f.area().into(),
 					area,
 				)
 			};
 
 			f.render_widget(Clear, area);
 
-			f.render_widget(ta.widget(), area);
+			f.render_widget(ta, area);
 
 			if self.show_char_count {
 				self.draw_char_count(f, area);

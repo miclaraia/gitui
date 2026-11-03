@@ -27,7 +27,9 @@ use ratatui::{
 	widgets::Paragraph,
 	Frame,
 };
+
 use std::{
+	fmt::Write as _,
 	fs::{read_to_string, File},
 	io::{Read, Write},
 	path::PathBuf,
@@ -218,6 +220,7 @@ impl CommitPopup {
 
 			self.hide();
 			self.queue.push(InternalEvent::Update(NeedsUpdate::ALL));
+			self.queue.push(InternalEvent::StatusLastFileMoved);
 			self.input.clear();
 		}
 
@@ -237,7 +240,7 @@ impl CommitPopup {
 			if let HookResult::NotOk(e) =
 				sync::hooks_pre_commit(&self.repo.borrow())?
 			{
-				log::error!("pre-commit hook error: {}", e);
+				log::error!("pre-commit hook error: {e}");
 				self.queue.push(InternalEvent::ShowErrorMsg(
 					format!("pre-commit hook error:\n{e}"),
 				));
@@ -253,7 +256,7 @@ impl CommitPopup {
 			if let HookResult::NotOk(e) =
 				sync::hooks_commit_msg(&self.repo.borrow(), &mut msg)?
 			{
-				log::error!("commit-msg hook error: {}", e);
+				log::error!("commit-msg hook error: {e}");
 				self.queue.push(InternalEvent::ShowErrorMsg(
 					format!("commit-msg hook error:\n{e}"),
 				));
@@ -265,7 +268,7 @@ impl CommitPopup {
 		if let HookResult::NotOk(e) =
 			sync::hooks_post_commit(&self.repo.borrow())?
 		{
-			log::error!("post-commit hook error: {}", e);
+			log::error!("post-commit hook error: {e}");
 			self.queue.push(InternalEvent::ShowErrorMsg(format!(
 				"post-commit hook error:\n{e}"
 			)));
@@ -333,6 +336,7 @@ impl CommitPopup {
 
 		Ok(())
 	}
+
 	fn signoff_commit(&mut self) {
 		let msg = self.input.get_text();
 		let signed_msg = self.add_sign_off(msg);
@@ -340,7 +344,8 @@ impl CommitPopup {
 			self.input.set_text(signed_msg);
 		}
 	}
-	fn toggle_verify(&mut self) {
+
+	const fn toggle_verify(&mut self) {
 		self.verify = !self.verify;
 	}
 
@@ -397,7 +402,7 @@ impl CommitPopup {
 						"commit.template",
 					)
 					.map_err(|e| {
-						log::error!("load git-config failed: {}", e);
+						log::error!("load git-config failed: {e}");
 						e
 					})
 					.ok()
@@ -412,7 +417,7 @@ impl CommitPopup {
 					.and_then(|path| {
 						read_to_string(&path)
 							.map_err(|e| {
-								log::error!("read commit.template failed: {e} (path: '{:?}')",path);
+								log::error!("read commit.template failed: {e} (path: '{path:?}')");
 								e
 							})
 							.ok()
@@ -443,7 +448,7 @@ impl CommitPopup {
 			msg_source,
 			&mut msg,
 		)? {
-			log::error!("prepare-commit-msg hook rejection: {e}",);
+			log::error!("prepare-commit-msg hook rejection: {e}");
 		}
 		self.input.set_text(msg);
 
@@ -469,9 +474,7 @@ impl CommitPopup {
 
 		let mut msg = msg.to_owned();
 		if let (Some(user), Some(mail)) = (user, mail) {
-			msg.push_str(&format!(
-				"\n\nSigned-off-by {user} <{mail}>"
-			));
+			let _ = write!(msg, "\n\nSigned-off-by: {user} <{mail}>");
 		}
 
 		Ok(msg)

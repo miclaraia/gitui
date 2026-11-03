@@ -69,7 +69,7 @@ impl AsyncPushTags {
 	}
 
 	///
-	pub fn request(&mut self, params: PushTagsRequest) -> Result<()> {
+	pub fn request(&self, params: PushTagsRequest) -> Result<()> {
 		log::trace!("request");
 
 		if self.is_pending()? {
@@ -147,7 +147,7 @@ impl AsyncPushTags {
 		*last_res = match res {
 			Ok(()) => None,
 			Err(e) => {
-				log::error!("push error: {}", e);
+				log::error!("push error: {e}");
 				Some(e.to_string())
 			}
 		};

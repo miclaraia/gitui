@@ -1,5 +1,6 @@
 use crate::{
 	accessors,
+	args::CliArgs,
 	cmdbar::CommandBar,
 	components::{
 		command_pump, event_pump, CommandInfo, Component,
@@ -10,15 +11,39 @@ use crate::{
 	options::{Options, SharedOptions},
 	popup_stack::PopupStack,
 	popups::{
-		AppOption, BlameFilePopup, BranchListPopup, BranchSortPopup,
-		CommitPopup, CompareCommitsPopup, ConfirmPopup,
-		CreateBranchPopup, ExternalEditorPopup, FetchPopup,
-		FileRevlogPopup, FuzzyFindPopup, HelpPopup,
-		InspectCommitPopup, LogSearchPopupPopup, MsgPopup,
-		OptionsPopup, PullPopup, PushPopup, PushTagsPopup,
-		RenameBranchPopup, ResetPopup, RevisionFilesPopup,
-		StashMsgPopup, SubmodulesListPopup, TagCommitPopup,
+		AppOption,
+                BlameFilePopup,
+                BranchListPopup,
+                BranchSortPopup,
+		CheckoutOptionPopup,
+                CommitPopup,
+                CompareCommitsPopup,
+		ConfirmPopup,
+                CreateBranchPopup,
+                CreateRemotePopup,
+		ExternalEditorPopup,
+                FetchPopup,
+                FileRevlogPopup,
+		FuzzyFindPopup,
+                GotoLinePopup,
+                HelpPopup,
+                InspectCommitPopup,
+		LogSearchPopupPopup,
+                MsgPopup,
+                OptionsPopup,
+                PullPopup,
+		PushPopup,
+                PushTagsPopup,
+                RemoteListPopup,
+                RenameBranchPopup,
+		RenameRemotePopup,
+                ResetPopup,
+                RevisionFilesPopup,
+		StashMsgPopup,
+                SubmodulesListPopup,
+                TagCommitPopup,
 		TagListPopup,
+                UpdateRemoteUrlPopup,
 	},
 	queue::{
 		Action, AppTabs, InternalEvent, NeedsUpdate, Queue,
@@ -87,6 +112,10 @@ pub struct App {
 	fetch_popup: FetchPopup,
 	tag_commit_popup: TagCommitPopup,
 	create_branch_popup: CreateBranchPopup,
+	create_remote_popup: CreateRemotePopup,
+	rename_remote_popup: RenameRemotePopup,
+	update_remote_url_popup: UpdateRemoteUrlPopup,
+	remotes_popup: RemoteListPopup,
 	rename_branch_popup: RenameBranchPopup,
 	select_branch_popup: BranchListPopup,
 	sort_branch_popup: BranchSortPopup,
@@ -94,6 +123,7 @@ pub struct App {
 	submodule_popup: SubmodulesListPopup,
 	tags_popup: TagListPopup,
 	reset_popup: ResetPopup,
+	checkout_option_popup: CheckoutOptionPopup,
 	cmdbar: RefCell<CommandBar>,
 	tab: usize,
 	revlog: Revlog,
@@ -108,6 +138,7 @@ pub struct App {
 	popup_stack: PopupStack,
 	options: SharedOptions,
 	repo_path_text: String,
+	goto_line_popup: GotoLinePopup,
 
 	// "Flags"
 	requires_redraw: Cell<bool>,
@@ -146,14 +177,15 @@ impl App {
 	///
 	#[allow(clippy::too_many_lines)]
 	pub fn new(
-		repo: RepoPathRef,
+		cliargs: CliArgs,
 		sender_git: Sender<AsyncGitNotification>,
 		sender_app: Sender<AsyncAppNotification>,
 		input: Input,
 		theme: Theme,
 		key_config: KeyConfig,
 	) -> Result<Self> {
-		log::trace!("open repo at: {:?}", &repo);
+		let repo = RefCell::new(cliargs.repo_path.clone());
+		log::trace!("open repo at: {repo:?}");
 
 		let repo_path_text =
 			repo_work_dir(&repo.borrow()).unwrap_or_default();
@@ -168,7 +200,20 @@ impl App {
 			sender_app,
 		};
 
-		let tab = env.options.borrow().current_tab();
+		let mut select_file: Option<PathBuf> = None;
+		let tab = if let Some(file) = cliargs.select_file {
+			// convert to relative git path
+			if let Ok(abs) = file.canonicalize() {
+				if let Ok(path) = abs.strip_prefix(
+					env.repo.borrow().gitpath().canonicalize()?,
+				) {
+					select_file = Some(Path::new(".").join(path));
+				}
+			}
+			2
+		} else {
+			env.options.borrow().current_tab()
+		};
 
 		let mut app = Self {
 			input,
@@ -191,6 +236,10 @@ impl App {
 			fetch_popup: FetchPopup::new(&env),
 			tag_commit_popup: TagCommitPopup::new(&env),
 			create_branch_popup: CreateBranchPopup::new(&env),
+			create_remote_popup: CreateRemotePopup::new(&env),
+			rename_remote_popup: RenameRemotePopup::new(&env),
+			update_remote_url_popup: UpdateRemoteUrlPopup::new(&env),
+			remotes_popup: RemoteListPopup::new(&env),
 			rename_branch_popup: RenameBranchPopup::new(&env),
 			select_branch_popup: BranchListPopup::new(&env),
 			tags_popup: TagListPopup::new(&env),
@@ -210,7 +259,9 @@ impl App {
 			status_tab: Status::new(&env),
 			stashing_tab: Stashing::new(&env),
 			stashlist_tab: StashList::new(&env),
-			files_tab: FilesTab::new(&env),
+			files_tab: FilesTab::new(&env, select_file),
+			checkout_option_popup: CheckoutOptionPopup::new(&env),
+			goto_line_popup: GotoLinePopup::new(&env),
 			tab: 0,
 			queue: env.queue,
 			theme: env.theme,
@@ -230,7 +281,7 @@ impl App {
 
 	///
 	pub fn draw(&self, f: &mut Frame) -> Result<()> {
-		let fsize = f.size();
+		let fsize = f.area();
 
 		self.cmdbar.borrow_mut().refresh_width(fsize.width);
 
@@ -268,7 +319,7 @@ impl App {
 				3 => self.stashing_tab.draw(f, chunks_main[1])?,
 				4 => self.stashlist_tab.draw(f, chunks_main[1])?,
 				_ => bail!("unknown tab"),
-			};
+			}
 		}
 
 		self.draw_popups(f)?;
@@ -278,7 +329,7 @@ impl App {
 
 	///
 	pub fn event(&mut self, ev: InputEvent) -> Result<()> {
-		log::trace!("event: {:?}", ev);
+		log::trace!("event: {ev:?}");
 
 		if let InputEvent::Input(ev) = ev {
 			if self.check_hard_exit(&ev) || self.check_quit(&ev) {
@@ -395,7 +446,7 @@ impl App {
 		&mut self,
 		ev: AsyncNotification,
 	) -> Result<()> {
-		log::trace!("update_async: {:?}", ev);
+		log::trace!("update_async: {ev:?}");
 
 		if let AsyncNotification::Git(ev) = ev {
 			self.status_tab.update_git(ev)?;
@@ -475,6 +526,7 @@ impl App {
 			msg_popup,
 			confirm_popup,
 			commit_popup,
+			goto_line_popup,
 			blame_file_popup,
 			file_revlog_popup,
 			stashmsg_popup,
@@ -487,7 +539,12 @@ impl App {
 			fetch_popup,
 			tag_commit_popup,
 			reset_popup,
+			checkout_option_popup,
 			create_branch_popup,
+			create_remote_popup,
+			rename_remote_popup,
+			update_remote_url_popup,
+			remotes_popup,
 			rename_branch_popup,
 			select_branch_popup,
 			revision_files_popup,
@@ -516,9 +573,14 @@ impl App {
 			external_editor_popup,
 			tag_commit_popup,
 			select_branch_popup,
+			remotes_popup,
+			create_remote_popup,
+			rename_remote_popup,
+			update_remote_url_popup,
 			submodule_popup,
 			tags_popup,
 			reset_popup,
+			checkout_option_popup,
 			create_branch_popup,
 			rename_branch_popup,
 			sort_branch_popup,
@@ -531,7 +593,8 @@ impl App {
 			fetch_popup,
 			options_popup,
 			confirm_popup,
-			msg_popup
+			msg_popup,
+			goto_line_popup
 		]
 	);
 
@@ -651,6 +714,9 @@ impl App {
 		if flags.contains(NeedsUpdate::BRANCHES) {
 			self.select_branch_popup.update_branches()?;
 		}
+		if flags.contains(NeedsUpdate::REMOTES) {
+			self.remotes_popup.update_remotes()?;
+		}
 
 		Ok(())
 	}
@@ -732,7 +798,19 @@ impl App {
 			InternalEvent::TagCommit(id) => {
 				self.tag_commit_popup.open(id)?;
 			}
-
+			InternalEvent::CreateRemote => {
+				self.create_remote_popup.open()?;
+			}
+			InternalEvent::RenameRemote(cur_name) => {
+				self.rename_remote_popup.open(cur_name)?;
+			}
+			InternalEvent::UpdateRemoteUrl(remote_name, cur_url) => {
+				self.update_remote_url_popup
+					.open(remote_name, cur_url)?;
+			}
+			InternalEvent::ViewRemotes => {
+				self.remotes_popup.open()?;
+			}
 			InternalEvent::CreateBranch => {
 				self.create_branch_popup.open()?;
 			}
@@ -888,7 +966,18 @@ impl App {
 			InternalEvent::CommitSearch(options) => {
 				self.revlog.search(options);
 			}
-		};
+			InternalEvent::OpenGotoLinePopup(max_line) => {
+				self.goto_line_popup.open(max_line);
+			}
+			InternalEvent::GotoLine(line) => {
+				if self.blame_file_popup.is_visible() {
+					self.blame_file_popup.goto_line(line);
+				}
+			}
+			InternalEvent::CheckoutOption(branch) => {
+				self.checkout_option_popup.open(branch)?;
+			}
+		}
 
 		Ok(flags)
 	}
@@ -942,6 +1031,9 @@ impl App {
 			Action::DeleteRemoteBranch(branch_ref) => {
 				self.delete_remote_branch(&branch_ref)?;
 			}
+			Action::DeleteRemote(remote_name) => {
+				self.delete_remote(&remote_name);
+			}
 			Action::DeleteTag(tag_name) => {
 				self.delete_tag(tag_name)?;
 			}
@@ -977,7 +1069,7 @@ impl App {
 					undo_last_commit(&self.repo.borrow())
 				);
 			}
-		};
+		}
 
 		flags.insert(NeedsUpdate::ALL);
 
@@ -999,7 +1091,7 @@ impl App {
 			));
 
 			self.tags_popup.update_tags()?;
-		};
+		}
 		Ok(())
 	}
 
@@ -1029,6 +1121,24 @@ impl App {
 		self.select_branch_popup.update_branches()?;
 
 		Ok(())
+	}
+
+	fn delete_remote(&self, remote_name: &str) {
+		let res =
+			sync::delete_remote(&self.repo.borrow(), remote_name);
+		match res {
+			Ok(()) => {
+				self.queue.push(InternalEvent::Update(
+					NeedsUpdate::ALL | NeedsUpdate::REMOTES,
+				));
+			}
+			Err(e) => {
+				log::error!("delete remote: {e:?}");
+				self.queue.push(InternalEvent::ShowErrorMsg(
+					format!("delete remote error:\n{e}"),
+				));
+			}
+		}
 	}
 
 	fn commands(&self, force_all: bool) -> Vec<CommandInfo> {
@@ -1090,7 +1200,7 @@ impl App {
 		const SIDE_PADS: usize = 2;
 		const MARGIN_LEFT_AND_RIGHT: usize = 2;
 
-		let r = r.inner(&Margin {
+		let r = r.inner(Margin {
 			vertical: 0,
 			horizontal: 1,
 		});
@@ -1125,7 +1235,8 @@ impl App {
 		let table_area = r; // use entire area to allow drawing the horizontal separator line
 		let text_area = left_right[1];
 
-		let tabs = tab_labels.into_iter().map(Line::from).collect();
+		let tabs: Vec<Line> =
+			tab_labels.into_iter().map(Line::from).collect();
 
 		f.render_widget(
 			Tabs::new(tabs)

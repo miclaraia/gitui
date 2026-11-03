@@ -1,3 +1,4 @@
+use crate::ui::syntax_text::DEFAULT_SYNTAX_THEME;
 use anyhow::Result;
 use asyncgit::{DiffLineType, StatusItemType};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -9,14 +10,14 @@ use struct_patch::Patch;
 pub type SharedTheme = Rc<Theme>;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Patch)]
-#[patch_derive(Serialize, Deserialize)]
+#[patch(attribute(derive(Serialize, Deserialize)))]
 pub struct Theme {
 	selected_tab: Color,
 	command_fg: Color,
 	selection_bg: Color,
 	selection_fg: Color,
+	use_selection_fg: bool,
 	cmdbar_bg: Color,
-	cmdbar_extra_lines_bg: Color,
 	disabled_fg: Color,
 	diff_line_add: Color,
 	diff_line_delete: Color,
@@ -34,6 +35,7 @@ pub struct Theme {
 	branch_fg: Color,
 	line_break: String,
 	block_title_focused: Color,
+	syntax: String,
 }
 
 impl Theme {
@@ -172,7 +174,11 @@ impl Theme {
 		selected: bool,
 	) -> Style {
 		if selected {
-			style.bg(self.selection_bg).fg(self.selection_fg)
+			if self.use_selection_fg {
+				style.bg(self.selection_bg).fg(self.selection_fg)
+			} else {
+				style.bg(self.selection_bg)
+			}
 		} else {
 			style
 		}
@@ -227,17 +233,13 @@ impl Theme {
 		self.line_break.clone()
 	}
 
-	pub fn commandbar(&self, enabled: bool, line: usize) -> Style {
+	pub fn commandbar(&self, enabled: bool) -> Style {
 		if enabled {
 			Style::default().fg(self.command_fg)
 		} else {
 			Style::default().fg(self.disabled_fg)
 		}
-		.bg(if line == 0 {
-			self.cmdbar_bg
-		} else {
-			self.cmdbar_extra_lines_bg
-		})
+		.bg(self.cmdbar_bg)
 	}
 
 	pub fn commit_hash(&self, selected: bool) -> Style {
@@ -321,11 +323,15 @@ impl Theme {
 		Ok(())
 	}
 
+	pub fn get_syntax(&self) -> String {
+		self.syntax.clone()
+	}
+
 	pub fn init(theme_path: &PathBuf) -> Self {
 		let mut theme = Self::default();
 
 		if let Ok(patch) = Self::load_patch(theme_path).map_err(|e| {
-			log::error!("theme error [{:?}]: {e}", theme_path);
+			log::error!("theme error [{theme_path:?}]: {e}");
 			e
 		}) {
 			theme.apply(patch);
@@ -334,15 +340,9 @@ impl Theme {
 			theme = old_theme;
 
 			if theme.save_patch(theme_path).is_ok() {
-				log::info!(
-					"Converted old theme to new format. ({:?})",
-					theme_path
-				);
+				log::info!("Converted old theme to new format. ({theme_path:?})");
 			} else {
-				log::warn!(
-					"Failed to save theme in new format. ({:?})",
-					theme_path
-				);
+				log::warn!("Failed to save theme in new format. ({theme_path:?})");
 			}
 		}
 
@@ -357,8 +357,8 @@ impl Default for Theme {
 			command_fg: Color::White,
 			selection_bg: Color::Blue,
 			selection_fg: Color::White,
+			use_selection_fg: true,
 			cmdbar_bg: Color::Blue,
-			cmdbar_extra_lines_bg: Color::Blue,
 			disabled_fg: Color::DarkGray,
 			diff_line_add: Color::Green,
 			diff_line_delete: Color::Red,
@@ -376,6 +376,9 @@ impl Default for Theme {
 			branch_fg: Color::LightYellow,
 			line_break: "¶".to_string(),
 			block_title_focused: Color::Reset,
+			// Available themes can be found in:
+			// [ThemeSet::load_defaults function](https://github.com/trishume/syntect/blob/7fe13c0fd53cdfa0f9fea1aa14c5ba37f81d8b71/src/dumps.rs#L215).
+			syntax: DEFAULT_SYNTAX_THEME.to_string(),
 		}
 	}
 }
@@ -388,22 +391,34 @@ mod tests {
 
 	#[test]
 	fn test_smoke() {
+		let _ = env_logger::builder()
+			.is_test(true)
+			.filter_level(log::LevelFilter::Trace)
+			.try_init();
+
 		let mut file = NamedTempFile::new().unwrap();
 
 		writeln!(
 			file,
-			r"
+			r##"
 (
-	selection_bg: Some(White),
+	selection_bg: Some("Black"),
+	selection_fg: Some("#ffffff"),
+	use_selection_fg: Some(false),
+	syntax: Some("InspiredGitHub")
 )
-"
+"##
 		)
 		.unwrap();
 
 		let theme = Theme::init(&file.path().to_path_buf());
 
-		assert_eq!(theme.selection_fg, Theme::default().selection_fg);
-		assert_eq!(theme.selection_bg, Color::White);
+		assert_eq!(theme.selected_tab, Theme::default().selected_tab);
+
 		assert_ne!(theme.selection_bg, Theme::default().selection_bg);
+		assert_ne!(theme.syntax, Theme::default().syntax);
+		assert_eq!(theme.selection_bg, Color::Black);
+		assert_eq!(theme.selection_fg, Color::Rgb(255, 255, 255));
+		assert_eq!(theme.syntax, "InspiredGitHub");
 	}
 }

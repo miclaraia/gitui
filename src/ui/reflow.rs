@@ -27,8 +27,8 @@ impl<'a, 'b> WordWrapper<'a, 'b> {
 		symbols: &'b mut dyn Iterator<Item = StyledGrapheme<'a>>,
 		max_line_width: u16,
 		trim: bool,
-	) -> WordWrapper<'a, 'b> {
-		WordWrapper {
+	) -> Self {
+		Self {
 			symbols,
 			max_line_width,
 			current_line: vec![],
@@ -38,13 +38,13 @@ impl<'a, 'b> WordWrapper<'a, 'b> {
 	}
 }
 
-impl<'a, 'b> LineComposer<'a> for WordWrapper<'a, 'b> {
+impl<'a> LineComposer<'a> for WordWrapper<'a, '_> {
 	fn next_line(&mut self) -> Option<(&[StyledGrapheme<'a>], u16)> {
 		if self.max_line_width == 0 {
 			return None;
 		}
 		std::mem::swap(&mut self.current_line, &mut self.next_line);
-		self.next_line.truncate(0);
+		self.next_line.clear();
 
 		let mut current_line_width = self
 			.current_line
@@ -152,8 +152,8 @@ impl<'a, 'b> LineTruncator<'a, 'b> {
 	pub fn new(
 		symbols: &'b mut dyn Iterator<Item = StyledGrapheme<'a>>,
 		max_line_width: u16,
-	) -> LineTruncator<'a, 'b> {
-		LineTruncator {
+	) -> Self {
+		Self {
 			symbols,
 			max_line_width,
 			horizontal_offset: 0,
@@ -161,18 +161,21 @@ impl<'a, 'b> LineTruncator<'a, 'b> {
 		}
 	}
 
-	pub fn set_horizontal_offset(&mut self, horizontal_offset: u16) {
+	pub const fn set_horizontal_offset(
+		&mut self,
+		horizontal_offset: u16,
+	) {
 		self.horizontal_offset = horizontal_offset;
 	}
 }
 
-impl<'a, 'b> LineComposer<'a> for LineTruncator<'a, 'b> {
+impl<'a> LineComposer<'a> for LineTruncator<'a, '_> {
 	fn next_line(&mut self) -> Option<(&[StyledGrapheme<'a>], u16)> {
 		if self.max_line_width == 0 {
 			return None;
 		}
 
-		self.current_line.truncate(0);
+		self.current_line.clear();
 		let mut current_line_width = 0;
 
 		let mut skip_rest = false;

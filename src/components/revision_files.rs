@@ -30,7 +30,10 @@ use ratatui::{
 	Frame,
 };
 use std::{borrow::Cow, fmt::Write};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+	collections::BTreeSet,
+	path::{Path, PathBuf},
+};
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
@@ -53,11 +56,15 @@ pub struct RevisionFilesComponent {
 	revision: Option<CommitInfo>,
 	focus: Focus,
 	key_config: SharedKeyConfig,
+	select_file: Option<PathBuf>,
 }
 
 impl RevisionFilesComponent {
 	///
-	pub fn new(env: &Environment) -> Self {
+	pub fn new(
+		env: &Environment,
+		select_file: Option<PathBuf>,
+	) -> Self {
 		Self {
 			queue: env.queue.clone(),
 			tree: FileTree::default(),
@@ -72,6 +79,7 @@ impl RevisionFilesComponent {
 			focus: Focus::Tree,
 			key_config: env.key_config.clone(),
 			repo: env.repo.clone(),
+			select_file,
 			visible: false,
 		}
 	}
@@ -81,7 +89,7 @@ impl RevisionFilesComponent {
 		self.show()?;
 
 		let same_id =
-			self.revision.as_ref().map_or(false, |c| c.id == commit);
+			self.revision.as_ref().is_some_and(|c| c.id == commit);
 
 		if !same_id {
 			self.files = None;
@@ -134,6 +142,12 @@ impl RevisionFilesComponent {
 						self.tree.collapse_but_root();
 
 						self.files = Some(last);
+
+						let select_file = self.select_file.clone();
+						self.select_file = None;
+						if let Some(file) = select_file {
+							self.find_file(file.as_path());
+						}
 					}
 				} else if let Some(rev) = &self.revision {
 					self.request_files(rev.id);
@@ -187,7 +201,7 @@ impl RevisionFilesComponent {
 	}
 
 	fn blame(&self) -> bool {
-		self.selected_file_path().map_or(false, |path| {
+		self.selected_file_path().is_some_and(|path| {
 			self.queue.push(InternalEvent::OpenPopup(
 				StackablePopupOpen::BlameFile(BlameFileOpen {
 					file_path: path,
@@ -201,7 +215,7 @@ impl RevisionFilesComponent {
 	}
 
 	fn file_history(&self) -> bool {
-		self.selected_file_path().map_or(false, |path| {
+		self.selected_file_path().is_some_and(|path| {
 			self.queue.push(InternalEvent::OpenPopup(
 				StackablePopupOpen::FileRevlog(FileRevOpen::new(
 					path,
@@ -274,6 +288,8 @@ impl RevisionFilesComponent {
 	fn draw_tree(&self, f: &mut Frame, area: Rect) -> Result<()> {
 		let tree_height = usize::from(area.height.saturating_sub(2));
 		let tree_width = usize::from(area.width);
+
+		self.tree.window_height.set(Some(tree_height));
 
 		self.tree.visual_selection().map_or_else(
 			|| {
@@ -370,7 +386,7 @@ impl RevisionFilesComponent {
 		Ok(title)
 	}
 
-	fn request_files(&mut self, commit: CommitId) {
+	fn request_files(&self, commit: CommitId) {
 		self.async_treefiles.spawn(AsyncTreeFilesJob::new(
 			self.repo.borrow().clone(),
 			commit,

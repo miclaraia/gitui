@@ -76,7 +76,7 @@ impl FileTreeItem {
 				),
 				kind: FileTreeItemKind::File(item.clone()),
 			}),
-			None => bail!("invalid file name {:?}", item),
+			None => bail!("invalid file name {item:?}"),
 		}
 	}
 
@@ -90,7 +90,7 @@ impl FileTreeItem {
 
 		match path
 			.components()
-			.last()
+			.next_back()
 			.map(std::path::Component::as_os_str)
 			.map(OsStr::to_string_lossy)
 			.map(String::from)
@@ -172,7 +172,7 @@ impl FileTreeItems {
 	}
 
 	///
-	pub(crate) fn len(&self) -> usize {
+	pub(crate) const fn len(&self) -> usize {
 		self.items.len()
 	}
 

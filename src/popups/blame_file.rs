@@ -136,10 +136,9 @@ impl DrawableComponent for BlameFilePopup {
 			let title_with_highlight_progress =
 				format!("{title}{syntax_highlight_progress}");
 
-			let table = Table::new(rows)
-				.widths(&constraints)
+			let table = Table::new(rows, constraints)
 				.column_spacing(1)
-				.highlight_style(self.theme.text(true, true))
+				.row_highlight_style(self.theme.text(true, true))
 				.block(
 					Block::default()
 						.borders(Borders::ALL)
@@ -235,6 +234,16 @@ impl Component for BlameFilePopup {
 				)
 				.order(1),
 			);
+			out.push(
+				CommandInfo::new(
+					strings::commands::open_line_number_popup(
+						&self.key_config,
+					),
+					true,
+					has_result,
+				)
+				.order(1),
+			);
 		}
 
 		visibility_blocking(self)
@@ -307,6 +316,22 @@ impl Component for BlameFilePopup {
 								FileRevOpen::new(filepath),
 							),
 						));
+					}
+				} else if key_match(
+					key,
+					self.key_config.keys.goto_line,
+				) {
+					let maybe_blame_result = &self
+						.blame
+						.as_ref()
+						.and_then(|blame| blame.result());
+					if let Some(blame_result) = maybe_blame_result {
+						let max_line = blame_result.lines().len() - 1;
+						self.queue.push(
+							InternalEvent::OpenGotoLinePopup(
+								max_line,
+							),
+						);
 					}
 				}
 
@@ -526,7 +551,7 @@ impl BlameFilePopup {
 	}
 
 	///
-	fn get_rows(&self, width: usize) -> Vec<Row> {
+	fn get_rows(&self, width: usize) -> Vec<Row<'_>> {
 		self.blame
 			.as_ref()
 			.and_then(|blame| blame.result())
@@ -545,7 +570,7 @@ impl BlameFilePopup {
 							i,
 							(blame_hunk.as_ref(), line.as_ref()),
 							file_blame,
-							&styled_text,
+							styled_text.as_ref(),
 						)
 					})
 					.collect()
@@ -577,6 +602,7 @@ impl BlameFilePopup {
 		job.spawn(AsyncSyntaxJob::new(
 			text,
 			params.file_path.clone(),
+			self.theme.get_syntax(),
 		));
 	}
 
@@ -586,7 +612,7 @@ impl BlameFilePopup {
 		line_number: usize,
 		hunk_and_line: (Option<&BlameHunk>, &str),
 		file_blame: &'a SyntaxFileBlame,
-		styled_text: &Option<Text<'a>>,
+		styled_text: Option<&Text<'a>>,
 	) -> Row<'a> {
 		let (hunk_for_line, line) = hunk_and_line;
 
@@ -639,7 +665,7 @@ impl BlameFilePopup {
 		&self,
 		width: usize,
 		blame_hunk: Option<&BlameHunk>,
-	) -> Vec<Cell> {
+	) -> Vec<Cell<'_>> {
 		let commit_hash = blame_hunk.map_or_else(
 			|| NO_COMMIT_ID.into(),
 			|hunk| hunk.commit_id.get_short_string(),
@@ -686,7 +712,7 @@ impl BlameFilePopup {
 		number_of_digits(max_line_number)
 	}
 
-	fn move_selection(&mut self, scroll_type: ScrollType) -> bool {
+	fn move_selection(&self, scroll_type: ScrollType) -> bool {
 		let mut table_state = self.table_state.take();
 
 		let old_selection = table_state.selected().unwrap_or(0);
@@ -717,7 +743,7 @@ impl BlameFilePopup {
 		needs_update
 	}
 
-	fn set_open_selection(&mut self) {
+	fn set_open_selection(&self) {
 		if let Some(selection) =
 			self.open_request.as_ref().and_then(|req| req.selection)
 		{
@@ -740,6 +766,14 @@ impl BlameFilePopup {
 
 				selection
 			})
+	}
+
+	pub fn goto_line(&mut self, line: usize) {
+		self.visible = true;
+		let mut table_state = self.table_state.take();
+		table_state
+			.select(Some(line.clamp(0, self.get_max_line_number())));
+		self.table_state.set(table_state);
 	}
 
 	fn selected_commit(&self) -> Option<CommitId> {

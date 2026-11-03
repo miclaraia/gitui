@@ -15,10 +15,11 @@ use asyncgit::{
 	sync::{
 		self,
 		cred::{
-			extract_username_password, need_username_password,
-			BasicAuthCredential,
+			extract_username_password_for_fetch,
+			need_username_password_for_fetch, BasicAuthCredential,
 		},
-		get_default_remote, RepoPathRef,
+		remotes::get_default_remote_for_fetch,
+		RepoPathRef,
 	},
 	AsyncGitNotification, AsyncPull, FetchRequest, RemoteProgress,
 };
@@ -69,11 +70,11 @@ impl PullPopup {
 	pub fn fetch(&mut self, branch: String) -> Result<()> {
 		self.branch = branch;
 		self.show()?;
-		if need_username_password(&self.repo.borrow())? {
-			let cred = extract_username_password(&self.repo.borrow())
-				.unwrap_or_else(|_| {
-					BasicAuthCredential::new(None, None)
-				});
+		if need_username_password_for_fetch(&self.repo.borrow())? {
+			let cred = extract_username_password_for_fetch(
+				&self.repo.borrow(),
+			)
+			.unwrap_or_else(|_| BasicAuthCredential::new(None, None));
 			if cred.is_complete() {
 				self.fetch_from_remote(Some(cred))
 			} else {
@@ -92,7 +93,9 @@ impl PullPopup {
 		self.pending = true;
 		self.progress = None;
 		self.git_fetch.request(FetchRequest {
-			remote: get_default_remote(&self.repo.borrow())?,
+			remote: get_default_remote_for_fetch(
+				&self.repo.borrow(),
+			)?,
 			branch: self.branch.clone(),
 			basic_credential: cred,
 		})?;
@@ -149,8 +152,8 @@ impl PullPopup {
 				&self.repo.borrow(),
 				&self.branch,
 			);
-			if let Err(err) = ff_res {
-				log::trace!("ff failed: {}", err);
+			if let Err(e) = ff_res {
+				log::trace!("ff failed: {e}");
 				self.confirm_merge(branch_compare.behind);
 			}
 		}
@@ -200,9 +203,9 @@ impl DrawableComponent for PullPopup {
 	fn draw(&self, f: &mut Frame, rect: Rect) -> Result<()> {
 		if self.visible {
 			let (state, progress) =
-				PushPopup::get_progress(&self.progress);
+				PushPopup::get_progress(self.progress.as_ref());
 
-			let area = ui::centered_rect_absolute(30, 3, f.size());
+			let area = ui::centered_rect_absolute(30, 3, f.area());
 
 			f.render_widget(Clear, area);
 			f.render_widget(

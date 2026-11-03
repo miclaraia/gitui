@@ -49,10 +49,10 @@ impl Scrollbar {
 		let right = area.right().saturating_sub(1);
 		if right <= area.left() {
 			return;
-		};
+		}
 
 		let (bar_top, bar_height) = {
-			let scrollbar_area = area.inner(&Margin {
+			let scrollbar_area = area.inner(Margin {
 				horizontal: 0,
 				vertical: 1,
 			});
@@ -86,10 +86,10 @@ impl Scrollbar {
 		let bottom = area.bottom().saturating_sub(1);
 		if bottom <= area.top() {
 			return;
-		};
+		}
 
 		let (bar_left, bar_width) = {
-			let scrollbar_area = area.inner(&Margin {
+			let scrollbar_area = area.inner(Margin {
 				horizontal: 1,
 				vertical: 0,
 			});

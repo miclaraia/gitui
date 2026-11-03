@@ -58,7 +58,7 @@ impl StatusTreeComponent {
 		}
 	}
 
-	pub fn set_commit(&mut self, revision: Option<CommitId>) {
+	pub const fn set_commit(&mut self, revision: Option<CommitId>) {
 		self.revision = revision;
 	}
 
@@ -92,12 +92,12 @@ impl StatusTreeComponent {
 	}
 
 	///
-	pub fn show_selection(&mut self, show: bool) {
+	pub const fn show_selection(&mut self, show: bool) {
 		self.show_selection = show;
 	}
 
 	/// returns true if list is empty
-	pub fn is_empty(&self) -> bool {
+	pub const fn is_empty(&self) -> bool {
 		self.tree.is_empty()
 	}
 
@@ -120,7 +120,7 @@ impl StatusTreeComponent {
 
 	///
 	pub fn is_file_selected(&self) -> bool {
-		self.tree.selected_item().map_or(false, |item| {
+		self.tree.selected_item().is_some_and(|item| {
 			match item.kind {
 				FileTreeItemKind::File(_) => true,
 				FileTreeItemKind::Path(..) => false,
@@ -208,7 +208,7 @@ impl StatusTreeComponent {
 						w = width as usize
 					)
 				} else {
-					format!("  {indent_str}{collapse_char}{string}",)
+					format!("  {indent_str}{collapse_char}{string}")
 				};
 
 				Some(Span::styled(
@@ -223,7 +223,7 @@ impl StatusTreeComponent {
 	/// allowing folders to be folded up if they are alone in their directory
 	fn build_vec_text_draw_info_for_drawing(
 		&self,
-	) -> (Vec<TextDrawInfo>, usize, usize) {
+	) -> (Vec<TextDrawInfo<'_>>, usize, usize) {
 		let mut should_skip_over: usize = 0;
 		let mut selection_offset: usize = 0;
 		let mut selection_offset_visible: usize = 0;
@@ -308,6 +308,25 @@ impl StatusTreeComponent {
 			}
 		}
 	}
+
+	fn open_history(&mut self) {
+		match self.selection_file() {
+			Some(status_item)
+				if !matches!(
+					status_item.status,
+					StatusItemType::New
+				) =>
+			{
+				self.hide();
+				self.queue.push(InternalEvent::OpenPopup(
+					StackablePopupOpen::FileRevlog(FileRevOpen::new(
+						status_item.path,
+					)),
+				));
+			}
+			_ => {}
+		}
+	}
 }
 
 /// Used for drawing the `FileTreeComponent`
@@ -351,6 +370,7 @@ impl DrawableComponent for StatusTreeComponent {
 				.map(|idx| idx.saturating_sub(selection_offset))
 				.unwrap_or_default();
 			let tree_height = r.height.saturating_sub(2) as usize;
+			self.tree.window_height.set(Some(tree_height));
 
 			self.scroll_top.set(ui::calc_scroll_top(
 				self.scroll_top.get(),
@@ -394,11 +414,18 @@ impl Component for StatusTreeComponent {
 		out: &mut Vec<CommandInfo>,
 		force_all: bool,
 	) -> CommandBlocking {
+		let available = self.focused || force_all;
+		let selection = self.selection_file();
+		let selected_is_file = selection.is_some();
+		let tracked = selection.is_some_and(|s| {
+			!matches!(s.status, StatusItemType::New)
+		});
+
 		out.push(
 			CommandInfo::new(
 				strings::commands::navigate_tree(&self.key_config),
 				!self.is_empty(),
-				self.focused || force_all,
+				available,
 			)
 			.order(order::NAV),
 		);
@@ -406,8 +433,8 @@ impl Component for StatusTreeComponent {
 		out.push(
 			CommandInfo::new(
 				strings::commands::blame_file(&self.key_config),
-				self.selection_file().is_some(),
-				self.focused || force_all,
+				selected_is_file && tracked,
+				available,
 			)
 			.order(order::RARE_ACTION),
 		);
@@ -417,8 +444,8 @@ impl Component for StatusTreeComponent {
 				strings::commands::open_file_history(
 					&self.key_config,
 				),
-				self.selection_file().is_some(),
-				self.focused || force_all,
+				selected_is_file && tracked,
+				available,
 			)
 			.order(order::RARE_ACTION),
 		);
@@ -426,8 +453,8 @@ impl Component for StatusTreeComponent {
 		out.push(
 			CommandInfo::new(
 				strings::commands::edit_item(&self.key_config),
-				self.selection_file().is_some(),
-				self.focused || force_all,
+				selected_is_file,
+				available,
 			)
 			.order(order::RARE_ACTION),
 		);
@@ -435,8 +462,8 @@ impl Component for StatusTreeComponent {
 		out.push(
 			CommandInfo::new(
 				strings::commands::copy_path(&self.key_config),
-				self.selection_file().is_some(),
-				self.focused || force_all,
+				selected_is_file,
+				available,
 			)
 			.order(order::RARE_ACTION),
 		);
@@ -448,31 +475,35 @@ impl Component for StatusTreeComponent {
 		if self.focused {
 			if let Event::Key(e) = ev {
 				return if key_match(e, self.key_config.keys.blame) {
-					if let Some(status_item) = self.selection_file() {
-						self.hide();
-						self.queue.push(InternalEvent::OpenPopup(
-							StackablePopupOpen::BlameFile(
-								BlameFileOpen {
-									file_path: status_item.path,
-									commit_id: self.revision,
-									selection: None,
-								},
-							),
-						));
+					match self.selection_file() {
+						Some(status_item)
+							if !matches!(
+								status_item.status,
+								StatusItemType::New
+							) =>
+						{
+							self.hide();
+							self.queue.push(
+								InternalEvent::OpenPopup(
+									StackablePopupOpen::BlameFile(
+										BlameFileOpen {
+											file_path: status_item
+												.path,
+											commit_id: self.revision,
+											selection: None,
+										},
+									),
+								),
+							);
+						}
+						_ => {}
 					}
 					Ok(EventState::Consumed)
 				} else if key_match(
 					e,
 					self.key_config.keys.file_history,
 				) {
-					if let Some(status_item) = self.selection_file() {
-						self.hide();
-						self.queue.push(InternalEvent::OpenPopup(
-							StackablePopupOpen::FileRevlog(
-								FileRevOpen::new(status_item.path),
-							),
-						));
-					}
+					self.open_history();
 					Ok(EventState::Consumed)
 				} else if key_match(e, self.key_config.keys.edit_file)
 				{
@@ -504,6 +535,15 @@ impl Component for StatusTreeComponent {
 					|| key_match(e, self.key_config.keys.shift_down)
 				{
 					Ok(self.move_selection(MoveSelection::End).into())
+				} else if key_match(e, self.key_config.keys.page_up) {
+					Ok(self
+						.move_selection(MoveSelection::PageUp)
+						.into())
+				} else if key_match(e, self.key_config.keys.page_down)
+				{
+					Ok(self
+						.move_selection(MoveSelection::PageDown)
+						.into())
 				} else if key_match(e, self.key_config.keys.move_left)
 				{
 					Ok(self

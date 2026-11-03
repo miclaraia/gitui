@@ -1,12 +1,22 @@
-//! asyncgit
+/*!
+`AsyncGit` is a library that provides non-blocking access to Git
+operations, enabling `GitUI` to perform potentially slow Git operations
+in the background while keeping the user interface responsive.
+
+It also provides synchronous Git operations.
+
+It wraps libraries like git2 and gix.
+*/
 
 #![forbid(missing_docs)]
 #![deny(
+	mismatched_lifetime_syntaxes,
 	unused_imports,
 	unused_must_use,
 	dead_code,
 	unstable_name_collisions,
-	unused_assignments
+	unused_assignments,
+	deprecated
 )]
 #![deny(clippy::all, clippy::perf, clippy::nursery, clippy::pedantic)]
 #![deny(
@@ -22,7 +32,9 @@
 #![allow(
 	clippy::module_name_repetitions,
 	clippy::must_use_candidate,
-	clippy::missing_errors_doc
+	clippy::missing_errors_doc,
+	clippy::empty_docs,
+	clippy::unnecessary_debug_formatting
 )]
 //TODO:
 #![allow(
@@ -128,10 +140,10 @@ pub fn hash<T: Hash + ?Sized>(v: &T) -> u64 {
 ///
 #[cfg(feature = "trace-libgit")]
 pub fn register_tracing_logging() -> bool {
-	fn git_trace(level: git2::TraceLevel, msg: &str) {
-		log::info!("[{:?}]: {}", level, msg);
+	fn git_trace(level: git2::TraceLevel, msg: &[u8]) {
+		log::info!("[{:?}]: {}", level, String::from_utf8_lossy(msg));
 	}
-	git2::trace_set(git2::TraceLevel::Trace, git_trace)
+	git2::trace_set(git2::TraceLevel::Trace, git_trace).is_ok()
 }
 
 ///

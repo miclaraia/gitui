@@ -67,7 +67,7 @@ impl ResetPopup {
 		}
 	}
 
-	fn get_text(&self, _width: u16) -> Vec<Line> {
+	fn get_text(&self, _width: u16) -> Vec<Line<'_>> {
 		let mut txt: Vec<Line> = Vec::with_capacity(10);
 
 		txt.push(Line::from(vec![
@@ -120,7 +120,7 @@ impl ResetPopup {
 	///
 	#[allow(clippy::unnecessary_wraps)]
 	pub fn update(&mut self) -> Result<()> {
-		self.git_branch_name.lookup().map(Some).unwrap_or(None);
+		self.git_branch_name.lookup().ok();
 
 		Ok(())
 	}
@@ -137,7 +137,7 @@ impl ResetPopup {
 		self.hide();
 	}
 
-	fn change_kind(&mut self, incr: bool) {
+	const fn change_kind(&mut self, incr: bool) {
 		self.kind = if incr {
 			match self.kind {
 				ResetType::Soft => ResetType::Mixed,

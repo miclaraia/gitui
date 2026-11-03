@@ -22,9 +22,10 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, fs, path::Path, rc::Rc};
 
 /// type of diff of a single line
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub enum DiffLineType {
 	/// just surrounding line, no change
+	#[default]
 	None,
 	/// header of the hunk
 	Header,
@@ -44,12 +45,6 @@ impl From<git2::DiffLineType> for DiffLineType {
 			| git2::DiffLineType::Addition => Self::Add,
 			_ => Self::None,
 		}
-	}
-}
-
-impl Default for DiffLineType {
-	fn default() -> Self {
-		Self::None
 	}
 }
 
@@ -557,7 +552,7 @@ mod tests {
 		let res =
 			get_diff(repo_path, "bar.txt", false, None).unwrap();
 
-		assert_eq!(res.hunks.len(), 2)
+		assert_eq!(res.hunks.len(), 2);
 	}
 
 	#[test]

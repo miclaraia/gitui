@@ -67,7 +67,7 @@ impl DrawableComponent for SubmodulesListPopup {
 				area,
 			);
 
-			let area = area.inner(&Margin {
+			let area = area.inner(Margin {
 				vertical: 1,
 				horizontal: 1,
 			});
@@ -317,8 +317,8 @@ impl SubmodulesListPopup {
 	}
 
 	fn set_selection(&mut self, selection: u16) -> Result<()> {
-		let num_entriess: u16 = self.submodules.len().try_into()?;
-		let num_entries = num_entriess.saturating_sub(1);
+		let num_entries: u16 = self.submodules.len().try_into()?;
+		let num_entries = num_entries.saturating_sub(1);
 
 		let selection = if selection > num_entries {
 			num_entries
@@ -336,7 +336,7 @@ impl SubmodulesListPopup {
 		theme: &SharedTheme,
 		width_available: u16,
 		height: usize,
-	) -> Text {
+	) -> Text<'_> {
 		const THREE_DOTS: &str = "...";
 		const THREE_DOTS_LENGTH: usize = THREE_DOTS.len(); // "..."
 		const COMMIT_HASH_LENGTH: usize = 8;
@@ -393,7 +393,7 @@ impl SubmodulesListPopup {
 		Text::from(txt)
 	}
 
-	fn get_info_text(&self, theme: &SharedTheme) -> Text {
+	fn get_info_text(&self, theme: &SharedTheme) -> Text<'_> {
 		self.selected_entry().map_or_else(
 			Text::default,
 			|submodule| {
@@ -442,14 +442,14 @@ impl SubmodulesListPopup {
 		)
 	}
 
-	fn get_local_info_text(&self, theme: &SharedTheme) -> Text {
+	fn get_local_info_text(&self, theme: &SharedTheme) -> Text<'_> {
 		let mut spans = vec![
 			Line::from(vec![Span::styled(
 				"Current:",
 				theme.text(false, false),
 			)]),
 			Line::from(vec![Span::styled(
-				self.repo_path.to_string(),
+				self.repo_path.clone(),
 				theme.text(true, false),
 			)]),
 			Line::from(vec![Span::styled(

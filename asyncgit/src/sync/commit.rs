@@ -1,6 +1,6 @@
 //! Git Api for Commits
 use super::{CommitId, RepoPath};
-use crate::sync::sign::{SignBuilder, SignError};
+use crate::sync::sign::{create_signed_commit, SignBuilder};
 use crate::{
 	error::{Error, Result},
 	sync::{repository::repo, utils::get_head_repo},
@@ -40,10 +40,12 @@ pub fn amend(
 		return Err(Error::SignAmendNonLastCommit);
 	}
 
+	let committer = signature_allow_undefined_name(&repo)?;
+
 	let new_id = commit.amend(
 		Some("HEAD"),
 		None,
-		None,
+		Some(&committer), // Passing a value will overwrite the committer.
 		None,
 		Some(msg),
 		Some(&tree),
@@ -54,8 +56,7 @@ pub fn amend(
 
 /// Wrap `Repository::signature` to allow unknown user.name.
 ///
-/// See <https://github.com/extrawurst/gitui/issues/79>.
-#[allow(clippy::redundant_pub_crate)]
+/// See <https://github.com/gitui-org/gitui/issues/79>.
 pub(crate) fn signature_allow_undefined_name(
 	repo: &Repository,
 ) -> std::result::Result<Signature<'_>, git2::Error> {
@@ -69,7 +70,7 @@ pub(crate) fn signature_allow_undefined_name(
 				config.get_entry("user.name"),
 				config.get_entry("user.email"),
 			) {
-				if let Some(email) = email_entry.value() {
+				if let Ok(email) = email_entry.value() {
 					return Signature::now("unknown", email);
 				}
 			};
@@ -98,58 +99,47 @@ pub fn commit(repo_path: &RepoPath, msg: &str) -> Result<CommitId> {
 
 	let parents = parents.iter().collect::<Vec<_>>();
 
-	let commit_id = if config
-		.get_bool("commit.gpgsign")
-		.unwrap_or(false)
-	{
-		let buffer = repo.commit_create_buffer(
-			&signature,
-			&signature,
-			msg,
-			&tree,
-			parents.as_slice(),
-		)?;
-
-		let commit = std::str::from_utf8(&buffer).map_err(|_e| {
-			SignError::Shellout("utf8 conversion error".to_string())
-		})?;
-
-		let signer = SignBuilder::from_gitconfig(&repo, &config)?;
-		let (signature, signature_field) = signer.sign(&buffer)?;
-		let commit_id = repo.commit_signed(
-			commit,
-			&signature,
-			signature_field.as_deref(),
-		)?;
-
-		// manually advance to the new commit ID
-		// repo.commit does that on its own, repo.commit_signed does not
-		// if there is no head, read default branch or default to "master"
-		if let Ok(mut head) = repo.head() {
-			head.set_target(commit_id, msg)?;
-		} else {
-			let default_branch_name = config
-				.get_str("init.defaultBranch")
-				.unwrap_or("master");
-			repo.reference(
-				&format!("refs/heads/{default_branch_name}"),
-				commit_id,
-				true,
+	let commit_id =
+		if config.get_bool("commit.gpgsign").unwrap_or(false) {
+			let signer = SignBuilder::from_gitconfig(&repo, &config)?;
+			let commit_id = create_signed_commit(
+				&repo,
+				signer.as_ref(),
+				&signature,
+				&signature,
 				msg,
+				&tree,
+				parents.as_slice(),
 			)?;
-		}
 
-		commit_id
-	} else {
-		repo.commit(
-			Some("HEAD"),
-			&signature,
-			&signature,
-			msg,
-			&tree,
-			parents.as_slice(),
-		)?
-	};
+			// manually advance to the new commit ID
+			// repo.commit does that on its own, repo.commit_signed does not
+			// if there is no head, read default branch or default to "master"
+			if let Ok(mut head) = repo.head() {
+				head.set_target(commit_id, msg)?;
+			} else {
+				let default_branch_name = config
+					.get_str("init.defaultBranch")
+					.unwrap_or("master");
+				repo.reference(
+					&format!("refs/heads/{default_branch_name}"),
+					commit_id,
+					true,
+					msg,
+				)?;
+			}
+
+			commit_id
+		} else {
+			repo.commit(
+				Some("HEAD"),
+				&signature,
+				&signature,
+				msg,
+				&tree,
+				parents.as_slice(),
+			)?
+		};
 
 	Ok(commit_id.into())
 }
@@ -309,6 +299,55 @@ mod tests {
 	}
 
 	#[test]
+	fn test_amend_with_different_user() {
+		let file_path1 = Path::new("foo");
+		let file_path2 = Path::new("foo2");
+		let (_td, repo) = repo_init_empty().unwrap();
+		let root = repo.path().parent().unwrap();
+		let repo_path: &RepoPath =
+			&root.as_os_str().to_str().unwrap().into();
+
+		File::create(root.join(file_path1))
+			.unwrap()
+			.write_all(b"test1")
+			.unwrap();
+
+		stage_add_file(repo_path, file_path1).unwrap();
+		let id = commit(repo_path, "commit msg").unwrap();
+
+		let amended_details =
+			get_commit_details(repo_path, id).unwrap();
+
+		assert_eq!(amended_details.committer, None);
+
+		File::create(root.join(file_path2))
+			.unwrap()
+			.write_all(b"test2")
+			.unwrap();
+
+		stage_add_file(repo_path, file_path2).unwrap();
+
+		repo.config()
+			.unwrap()
+			.set_str("user.name", "changed name")
+			.unwrap();
+		repo.config()
+			.unwrap()
+			.set_str("user.email", "changed@example.com")
+			.unwrap();
+
+		let new_id = amend(repo_path, id, "amended").unwrap();
+
+		let amended_details =
+			get_commit_details(repo_path, new_id).unwrap();
+		assert_eq!(amended_details.author.name, "name");
+		assert_eq!(amended_details.author.email, "email");
+		let committer = amended_details.committer.unwrap();
+		assert_eq!(committer.name, "changed name");
+		assert_eq!(committer.email, "changed@example.com");
+	}
+
+	#[test]
 	fn test_tag() -> Result<()> {
 		let file_path = Path::new("foo");
 		let (_td, repo) = repo_init_empty().unwrap();
@@ -330,10 +369,7 @@ mod tests {
 			vec![Tag::new("tag")]
 		);
 
-		assert!(matches!(
-			tag_commit(repo_path, &new_id, "tag", None),
-			Err(_)
-		));
+		assert!(tag_commit(repo_path, &new_id, "tag", None).is_err());
 
 		assert_eq!(
 			get_tags(repo_path).unwrap()[&new_id],
@@ -401,13 +437,13 @@ mod tests {
 
 		let error = commit(repo_path, "commit msg");
 
-		assert!(matches!(error, Err(_)));
+		assert!(error.is_err());
 
 		repo.config()?.set_str("user.email", "email")?;
 
 		let success = commit(repo_path, "commit msg");
 
-		assert!(matches!(success, Ok(_)));
+		assert!(success.is_ok());
 		assert_eq!(count_commits(&repo, 10), 1);
 
 		let details =
@@ -437,7 +473,7 @@ mod tests {
 
 		let mut success = commit(repo_path, "commit msg");
 
-		assert!(matches!(success, Ok(_)));
+		assert!(success.is_ok());
 		assert_eq!(count_commits(&repo, 10), 1);
 
 		let mut details =
@@ -450,7 +486,7 @@ mod tests {
 
 		success = commit(repo_path, "commit msg");
 
-		assert!(matches!(success, Ok(_)));
+		assert!(success.is_ok());
 		assert_eq!(count_commits(&repo, 10), 2);
 
 		details =

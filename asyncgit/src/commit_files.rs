@@ -70,7 +70,7 @@ impl AsyncCommitFiles {
 
 	///
 	pub fn current(
-		&mut self,
+		&self,
 	) -> Result<Option<(CommitFilesParams, ResultType)>> {
 		let c = self.current.lock()?;
 
@@ -84,12 +84,12 @@ impl AsyncCommitFiles {
 	}
 
 	///
-	pub fn fetch(&mut self, params: CommitFilesParams) -> Result<()> {
+	pub fn fetch(&self, params: CommitFilesParams) -> Result<()> {
 		if self.is_pending() {
 			return Ok(());
 		}
 
-		log::trace!("request: {:?}", params);
+		log::trace!("request: {params:?}");
 
 		{
 			let current = self.current.lock()?;

@@ -1,31 +1,24 @@
-//TODO: hopefully released in next rust (see https://github.com/rust-lang/rust-clippy/issues/9440)
-#![allow(clippy::use_self)]
-
 use crate::error::Result;
 use git2::Repository;
 use scopetime::scope_time;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 use super::{repository::repo, RepoPath};
 
 // see https://git-scm.com/docs/git-config#Documentation/git-config.txt-statusshowUntrackedFiles
 /// represents the `status.showUntrackedFiles` git config state
 #[derive(
-	Hash, Copy, Clone, PartialEq, Eq, Serialize, Deserialize,
+	Hash, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize,
 )]
 pub enum ShowUntrackedFilesConfig {
 	///
+	#[default]
 	No,
 	///
 	Normal,
 	///
 	All,
-}
-
-impl Default for ShowUntrackedFilesConfig {
-	fn default() -> Self {
-		Self::No
-	}
 }
 
 impl ShowUntrackedFilesConfig {
@@ -59,7 +52,51 @@ pub fn untracked_files_config_repo(
 		}
 	}
 
+	// This does not reflect how git works according to its docs that say: "If this variable is not
+	// specified, it defaults to `normal`."
+	//
+	// https://git-scm.com/docs/git-config#Documentation/git-config.txt-statusshowUntrackedFiles
+	//
+	// Note that this might become less relevant over time as more code gets migrated to `gitoxide`
+	// because `gitoxide` respects `status.showUntrackedFiles` by default.
 	Ok(ShowUntrackedFilesConfig::All)
+}
+
+// see https://git-scm.com/docs/git-config#Documentation/git-config.txt-pushdefault
+/// represents `push.default` git config
+#[derive(PartialEq, Default, Eq)]
+pub enum PushDefaultStrategyConfig {
+	Nothing,
+	Current,
+	Upstream,
+	#[default]
+	Simple,
+	Matching,
+}
+
+impl FromStr for PushDefaultStrategyConfig {
+	type Err = crate::Error;
+	fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+		match value {
+			"nothing" => Ok(Self::Nothing),
+			"current" => Ok(Self::Current),
+			"upstream" | "tracking" => Ok(Self::Upstream),
+			"simple" => Ok(Self::Simple),
+			"matching" => Ok(Self::Matching),
+			_ => Err(crate::Error::GitConfig(format!(
+				"malformed value for push.default: {value}, must be one of nothing, matching, simple, upstream or current"
+			))),
+		}
+	}
+}
+
+pub fn push_default_strategy_config_repo(
+	repo: &Repository,
+) -> Result<PushDefaultStrategyConfig> {
+	(get_config_string_repo(repo, "push.default")?).map_or_else(
+		|| Ok(PushDefaultStrategyConfig::default()),
+		|entry_str| entry_str.parse(),
+	)
 }
 
 ///
@@ -71,7 +108,6 @@ pub fn untracked_files_config(
 }
 
 /// get string from config
-
 pub fn get_config_string(
 	repo_path: &RepoPath,
 	key: &str,
@@ -97,7 +133,7 @@ pub fn get_config_string_repo(
 	};
 
 	if entry.has_value() {
-		Ok(entry.value().map(std::string::ToString::to_string))
+		Ok(entry.value().ok().map(std::string::ToString::to_string))
 	} else {
 		Ok(None)
 	}

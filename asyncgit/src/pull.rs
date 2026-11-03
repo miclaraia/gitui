@@ -71,7 +71,7 @@ impl AsyncPull {
 	}
 
 	///
-	pub fn request(&mut self, params: FetchRequest) -> Result<()> {
+	pub fn request(&self, params: FetchRequest) -> Result<()> {
 		log::trace!("request");
 
 		if self.is_pending()? {
@@ -153,7 +153,7 @@ impl AsyncPull {
 		*last_res = match res {
 			Ok(bytes) => Some((bytes, String::new())),
 			Err(e) => {
-				log::error!("fetch error: {}", e);
+				log::error!("fetch error: {e}");
 				Some((0, e.to_string()))
 			}
 		};

@@ -1,6 +1,7 @@
 // #![forbid(missing_docs)]
 #![forbid(unsafe_code)]
 #![deny(
+	mismatched_lifetime_syntaxes,
 	unused_imports,
 	unused_must_use,
 	dead_code,
@@ -15,9 +16,12 @@
 #![deny(clippy::panic)]
 #![deny(clippy::match_like_matches_macro)]
 #![deny(clippy::needless_update)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::missing_errors_doc)]
+#![allow(
+	clippy::module_name_repetitions,
+	clippy::must_use_candidate,
+	clippy::missing_errors_doc,
+	clippy::empty_docs
+)]
 
 mod error;
 mod filetree;

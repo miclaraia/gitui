@@ -112,6 +112,11 @@ impl BranchInfo {
 
 		None
 	}
+
+	/// returns whether branch is local
+	pub const fn is_local(&self) -> bool {
+		matches!(self.details, BranchDetails::Local(_))
+	}
 }
 
 ///
@@ -163,7 +168,9 @@ pub fn get_branches_info(
 				.branch_upstream_remote(&reference)
 				.ok()
 				.as_ref()
-				.and_then(git2::Buf::as_str)
+				.and_then(|upstream_remote| {
+					git2::Buf::as_str(upstream_remote).ok()
+				})
 				.map(String::from);
 
 			let name_bytes = branch.name_bytes()?;
@@ -258,6 +265,25 @@ pub fn get_branch_remote(
 	}
 }
 
+/// Retrieve the upstream merge of a local `branch`,
+/// configured in "branch.*.merge"
+///
+/// For details check git2 `branch_upstream_merge`
+pub fn get_branch_upstream_merge(
+	repo_path: &RepoPath,
+	branch: &str,
+) -> Result<Option<String>> {
+	let repo = repo(repo_path)?;
+	let branch = repo.find_branch(branch, BranchType::Local)?;
+	let reference = bytes2string(branch.get().name_bytes())?;
+	let remote_name = repo.branch_upstream_merge(&reference).ok();
+	if let Some(remote_name) = remote_name {
+		Ok(Some(bytes2string(remote_name.as_ref())?))
+	} else {
+		Ok(None)
+	}
+}
+
 /// returns whether the pull merge strategy is set to rebase
 pub fn config_is_pull_rebase(repo_path: &RepoPath) -> Result<bool> {
 	let repo = repo(repo_path)?;
@@ -267,7 +293,7 @@ pub fn config_is_pull_rebase(repo_path: &RepoPath) -> Result<bool> {
 		let value =
 			rebase.value().map(String::from).unwrap_or_default();
 		return Ok(value == "true");
-	};
+	}
 
 	Ok(false)
 }
@@ -323,7 +349,7 @@ pub fn checkout_branch(
 		Some(&mut git2::build::CheckoutBuilder::new()),
 	)?;
 
-	let branch_ref = branch_ref.name().ok_or_else(|| {
+	let branch_ref = branch_ref.name().map_err(|_| {
 		Error::Generic(String::from("branch ref not found"))
 	});
 
@@ -512,7 +538,7 @@ mod tests_branch_compare {
 
 		let res = branch_compare_upstream(repo_path, "test");
 
-		assert_eq!(res.is_err(), true);
+		assert!(res.is_err());
 	}
 }
 
@@ -688,6 +714,49 @@ mod tests_branches {
 
 		assert!(get_branch_remote(repo_path, "foo").is_err());
 	}
+
+	#[test]
+	fn test_branch_no_upstream_merge_config() {
+		let (_r, repo) = repo_init().unwrap();
+		let root = repo.path().parent().unwrap();
+		let repo_path: &RepoPath =
+			&root.as_os_str().to_str().unwrap().into();
+
+		let upstream_merge_res =
+			get_branch_upstream_merge(repo_path, "master");
+		assert!(
+			upstream_merge_res.is_ok_and(|v| v.as_ref().is_none())
+		);
+	}
+
+	#[test]
+	fn test_branch_with_upstream_merge_config() {
+		let (_r, repo) = repo_init().unwrap();
+		let root = repo.path().parent().unwrap();
+		let repo_path: &RepoPath =
+			&root.as_os_str().to_str().unwrap().into();
+
+		let branch_name = "master";
+		let upstream_merge = "refs/heads/master";
+
+		let mut config = repo.config().unwrap();
+		config
+			.set_str(
+				&format!("branch.{branch_name}.merge"),
+				upstream_merge,
+			)
+			.expect("fail set branch merge config");
+
+		let upstream_merge_res =
+			get_branch_upstream_merge(repo_path, branch_name);
+		assert!(upstream_merge_res
+			.as_ref()
+			.is_ok_and(|v| v.as_ref().is_some()));
+		assert_eq!(
+			&upstream_merge_res.unwrap().unwrap(),
+			upstream_merge
+		);
+	}
 }
 
 #[cfg(test)]
@@ -745,7 +814,7 @@ mod tests_checkout {
 		let file = root.join(filename);
 		File::create(&file).unwrap();
 
-		stage_add_file(&repo_path, &Path::new(filename)).unwrap();
+		stage_add_file(repo_path, Path::new(filename)).unwrap();
 
 		assert!(checkout_branch(repo_path, "test").is_ok());
 	}
@@ -970,7 +1039,7 @@ mod test_remote_branches {
 	}
 
 	#[test]
-	fn test_checkout_remote_branch_hirachical() {
+	fn test_checkout_remote_branch_hierarchical() {
 		let (r1_dir, _repo) = repo_init_bare().unwrap();
 
 		let (clone1_dir, clone1) =

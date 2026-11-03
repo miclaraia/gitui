@@ -116,7 +116,7 @@ impl Options {
 		self.save();
 	}
 
-	pub fn has_commit_msg_history(&self) -> bool {
+	pub const fn has_commit_msg_history(&self) -> bool {
 		!self.data.commit_msgs.is_empty()
 	}
 
@@ -133,13 +133,13 @@ impl Options {
 
 			index = entries.saturating_sub(1) - index;
 
-			Some(self.data.commit_msgs[index].to_string())
+			Some(self.data.commit_msgs[index].clone())
 		}
 	}
 
 	fn save(&self) {
 		if let Err(e) = self.save_failable() {
-			log::error!("options save error: {}", e);
+			log::error!("options save error: {e}");
 		}
 	}
 
@@ -152,8 +152,6 @@ impl Options {
 		Ok(from_bytes(&buffer)?)
 	}
 
-	//TODO: fix once FP in clippy is fixed
-	#[allow(clippy::needless_borrow)]
 	fn save_failable(&self) -> Result<()> {
 		let dir = Self::options_file(&self.repo)?;
 

@@ -42,6 +42,12 @@ impl RepoPath {
 	}
 }
 
+impl From<PathBuf> for RepoPath {
+	fn from(value: PathBuf) -> Self {
+		Self::Path(value)
+	}
+}
+
 impl From<&str> for RepoPath {
 	fn from(p: &str) -> Self {
 		Self::Path(PathBuf::from(p))
@@ -51,12 +57,25 @@ impl From<&str> for RepoPath {
 pub fn repo(repo_path: &RepoPath) -> Result<Repository> {
 	let repo = Repository::open_ext(
 		repo_path.gitpath(),
-		RepositoryOpenFlags::empty(),
+		RepositoryOpenFlags::FROM_ENV,
 		Vec::<&Path>::new(),
 	)?;
 
 	if let Some(workdir) = repo_path.workdir() {
 		repo.set_workdir(workdir, false)?;
+	}
+
+	Ok(repo)
+}
+
+pub fn gix_repo(repo_path: &RepoPath) -> Result<gix::Repository> {
+	let mut repo: gix::Repository = gix::ThreadSafeRepository::discover_with_environment_overrides(
+		repo_path.gitpath(),
+	)
+	.map(Into::into)?;
+
+	if let Some(workdir) = repo_path.workdir() {
+		repo.set_workdir(Some(workdir.into()))?;
 	}
 
 	Ok(repo)

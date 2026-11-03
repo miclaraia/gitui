@@ -30,6 +30,8 @@ pub static PUSH_TAGS_STATES_PUSHING: &str = "pushing";
 pub static PUSH_TAGS_STATES_DONE: &str = "done";
 
 pub static POPUP_TITLE_SUBMODULES: &str = "Submodules";
+pub static POPUP_TITLE_REMOTES: &str = "Remotes";
+pub static POPUP_SUBTITLE_REMOTES: &str = "Details";
 pub static POPUP_TITLE_FUZZY_FIND: &str = "Fuzzy Finder";
 pub static POPUP_TITLE_LOG_SEARCH: &str = "Search";
 pub static POPUP_TITLE_BRANCH_SORT: &str = "Sort by";
@@ -252,6 +254,17 @@ pub fn confirm_title_delete_remote_branch(
 ) -> String {
 	"Delete Remote Branch".to_string()
 }
+pub fn confirm_title_delete_remote(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"Delete Remote".to_string()
+}
+pub fn confirm_msg_delete_remote(
+	_key_config: &SharedKeyConfig,
+	remote_name: &str,
+) -> String {
+	format!("Confirm deleting remote \"{remote_name}\"")
+}
 pub fn confirm_msg_delete_remote_branch(
 	_key_config: &SharedKeyConfig,
 	branch_ref: &str,
@@ -340,6 +353,49 @@ pub fn create_branch_popup_msg(
 ) -> String {
 	"type branch name".to_string()
 }
+pub fn rename_remote_popup_title(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"Rename remote".to_string()
+}
+pub fn rename_remote_popup_msg(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"new remote name".to_string()
+}
+pub fn update_remote_url_popup_title(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"Update url".to_string()
+}
+pub fn update_remote_url_popup_msg(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"new remote url".to_string()
+}
+pub fn create_remote_popup_title_name(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"Remote name".to_string()
+}
+pub fn create_remote_popup_title_url(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"Remote url".to_string()
+}
+pub fn create_remote_popup_msg_name(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"type remote name".to_string()
+}
+pub fn create_remote_popup_msg_url(
+	_key_config: &SharedKeyConfig,
+) -> String {
+	"type remote url".to_string()
+}
+pub const fn remote_name_invalid() -> &'static str {
+	"[invalid name]"
+}
 pub fn username_popup_title(_key_config: &SharedKeyConfig) -> String {
 	"Username".to_string()
 }
@@ -405,7 +461,7 @@ pub fn copy_success(s: &str) -> String {
 	format!("{POPUP_SUCCESS_COPY} \"{s}\"")
 }
 
-pub fn ellipsis_trim_start(s: &str, width: usize) -> Cow<str> {
+pub fn ellipsis_trim_start(s: &str, width: usize) -> Cow<'_, str> {
 	if s.width() <= width {
 		Cow::Borrowed(s)
 	} else {
@@ -417,6 +473,53 @@ pub fn ellipsis_trim_start(s: &str, width: usize) -> Cow<str> {
 			)
 			.0
 		))
+	}
+}
+
+pub const fn normalize_branch_name_char(c: char) -> char {
+	match c {
+		' ' => '-',
+		c => c,
+	}
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum CheckoutOptions {
+	KeepLocalChanges,
+	DiscardAllLocalChagnes,
+}
+
+impl CheckoutOptions {
+	pub const fn previous(self) -> Self {
+		match self {
+			Self::KeepLocalChanges => Self::DiscardAllLocalChagnes,
+			Self::DiscardAllLocalChagnes => Self::KeepLocalChanges,
+		}
+	}
+
+	pub const fn next(self) -> Self {
+		match self {
+			Self::KeepLocalChanges => Self::DiscardAllLocalChagnes,
+			Self::DiscardAllLocalChagnes => Self::KeepLocalChanges,
+		}
+	}
+
+	pub const fn to_string_pair(
+		self,
+	) -> (&'static str, &'static str) {
+		const CHECKOUT_OPTION_UNCHANGE: &str =
+			" 🟡 Keep local changes";
+		const CHECKOUT_OPTION_DISCARD: &str =
+			" 🔴 Discard all local changes";
+
+		match self {
+			Self::KeepLocalChanges => {
+				("Don't change", CHECKOUT_OPTION_UNCHANGE)
+			}
+			Self::DiscardAllLocalChagnes => {
+				("Discard", CHECKOUT_OPTION_DISCARD)
+			}
+		}
 	}
 }
 
@@ -891,6 +994,99 @@ pub mod commands {
 		)
 	}
 
+	pub fn view_remotes(key_config: &SharedKeyConfig) -> CommandText {
+		CommandText::new(
+			format!(
+				"Remotes [{}]",
+				key_config.get_hint(key_config.keys.view_remotes)
+			),
+			"open remotes view",
+			CMD_GROUP_GENERAL,
+		)
+	}
+
+	pub fn update_remote_name(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Edit name [{}]",
+				key_config
+					.get_hint(key_config.keys.update_remote_name)
+			),
+			"updates a remote name",
+			CMD_GROUP_GENERAL,
+		)
+	}
+
+	pub fn update_remote_url(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Edit url [{}]",
+				key_config
+					.get_hint(key_config.keys.update_remote_url)
+			),
+			"updates a remote url",
+			CMD_GROUP_GENERAL,
+		)
+	}
+
+	pub fn create_remote(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Add [{}]",
+				key_config.get_hint(key_config.keys.add_remote)
+			),
+			"creates a new remote",
+			CMD_GROUP_GENERAL,
+		)
+	}
+
+	pub fn delete_remote_popup(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Remove [{}]",
+				key_config.get_hint(key_config.keys.delete_remote),
+			),
+			"remove a remote",
+			CMD_GROUP_BRANCHES,
+		)
+	}
+
+	pub fn remote_confirm_name_msg(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Confirm name [{}]",
+				key_config.get_hint(key_config.keys.enter),
+			),
+			"confirm remote name",
+			CMD_GROUP_BRANCHES,
+		)
+		.hide_help()
+	}
+
+	pub fn remote_confirm_url_msg(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Confirm url [{}]",
+				key_config.get_hint(key_config.keys.enter),
+			),
+			"confirm remote url",
+			CMD_GROUP_BRANCHES,
+		)
+		.hide_help()
+	}
+
 	pub fn open_submodule(
 		key_config: &SharedKeyConfig,
 	) -> CommandText {
@@ -1361,6 +1557,18 @@ pub mod commands {
 			CMD_GROUP_LOG,
 		)
 	}
+	pub fn open_line_number_popup(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Go to [{}]",
+				key_config.get_hint(key_config.keys.goto_line),
+			),
+			"go to a given line number in the blame view",
+			CMD_GROUP_GENERAL,
+		)
+	}
 	pub fn log_tag_commit(
 		key_config: &SharedKeyConfig,
 	) -> CommandText {
@@ -1781,5 +1989,32 @@ pub mod commands {
 			"find commit from sha",
 			CMD_GROUP_LOG,
 		)
+	}
+
+	pub fn goto_line(key_config: &SharedKeyConfig) -> CommandText {
+		CommandText::new(
+			format!(
+				"Go To [{}]",
+				key_config.get_hint(key_config.keys.enter),
+			),
+			"Go to the given line",
+			CMD_GROUP_GENERAL,
+		)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_spaces_are_replaced_by_dashes_in_branch_name() {
+		let input = "feature/auto replace spaces in branch name";
+		let output: String =
+			input.chars().map(normalize_branch_name_char).collect();
+		assert_eq!(
+			output,
+			"feature/auto-replace-spaces-in-branch-name"
+		);
 	}
 }

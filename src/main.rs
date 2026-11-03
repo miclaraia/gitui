@@ -1,5 +1,39 @@
+//!
+//! The gitui program is a text-based UI for working with a Git repository.
+//! The main navigation occurs between a number of tabs.
+//! When you execute commands, the program may use popups to communicate
+//! with the user. It is possible to customize the keybindings.
+//!
+//!
+//! ## Internal Modules
+//! The top-level modules of gitui can be grouped as follows:
+//!
+//! - User Interface
+//!   - [tabs] for main navigation
+//!   - [components] for visual elements used on tabs
+//!   - [popups] for temporary dialogs
+//!   - [ui] for tooling like scrollbars
+//! - Git Interface
+//!   - [asyncgit] (crate) for async operations on repository
+//! - Distribution and Documentation
+//!   - Project files
+//!   - Github CI
+//!   - Installation files
+//!   - Usage guides
+//!
+//! ## Included Crates
+//! Some crates are part of the gitui repository:
+//! - [asyncgit] for Git operations in the background.
+//!   - git2-hooks (used by asyncgit).
+//!     - git2-testing (used by git2-hooks).
+//!   - invalidstring used by asyncgit for testing with invalid strings.
+//! - [filetreelist] for a tree view of files.
+//! - [scopetime] for measuring execution time.
+//!
+
 #![forbid(unsafe_code)]
 #![deny(
+	mismatched_lifetime_syntaxes,
 	unused_imports,
 	unused_must_use,
 	dead_code,
@@ -11,15 +45,15 @@
 	clippy::unwrap_used,
 	clippy::filetype_is_file,
 	clippy::cargo,
-	clippy::unwrap_used,
 	clippy::panic,
 	clippy::match_like_matches_macro
 )]
-#![allow(clippy::module_name_repetitions)]
 #![allow(
 	clippy::multiple_crate_versions,
 	clippy::bool_to_int_with_if,
-	clippy::module_name_repetitions
+	clippy::module_name_repetitions,
+	clippy::empty_docs,
+	clippy::unnecessary_debug_formatting
 )]
 
 //TODO:
@@ -31,6 +65,7 @@ mod bug_report;
 mod clipboard;
 mod cmdbar;
 mod components;
+mod gitui;
 mod input;
 mod keys;
 mod notify_mutex;
@@ -45,15 +80,15 @@ mod tabs;
 mod ui;
 mod watcher;
 
-use crate::{app::App, args::process_cmdline};
-use anyhow::{bail, Result};
-use app::QuitState;
-use asyncgit::{
-	sync::{utils::repo_work_dir, RepoPath},
-	AsyncGitNotification,
+use crate::{
+	app::App,
+	args::{process_cmdline, CliArgs},
 };
+use anyhow::{anyhow, bail, Result};
+use app::QuitState;
+use asyncgit::{sync::RepoPath, AsyncGitNotification};
 use backtrace::Backtrace;
-use crossbeam_channel::{never, tick, unbounded, Receiver, Select};
+use crossbeam_channel::{Receiver, Select};
 use crossterm::{
 	terminal::{
 		disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
@@ -61,20 +96,18 @@ use crossterm::{
 	},
 	ExecutableCommand,
 };
-use input::{Input, InputEvent, InputState};
+use gitui::Gitui;
+use input::InputEvent;
 use keys::KeyConfig;
 use ratatui::backend::CrosstermBackend;
 use scopeguard::defer;
-use scopetime::scope_time;
-use spinner::Spinner;
 use std::{
-	cell::RefCell,
 	io::{self, Stdout},
-	panic, process,
+	panic,
+	path::Path,
 	time::{Duration, Instant},
 };
 use ui::style::Theme;
-use watcher::RepoWatcher;
 
 type Terminal = ratatui::Terminal<CrosstermBackend<io::Stdout>>;
 
@@ -117,21 +150,28 @@ enum Updater {
 	NotifyWatcher,
 }
 
+/// Do `log::error!` and `eprintln!` in one line.
+macro_rules! log_eprintln {
+	( $($arg:tt)* ) => {{
+		log::error!($($arg)*);
+		eprintln!($($arg)*);
+	}};
+}
+
 fn main() -> Result<()> {
 	let app_start = Instant::now();
 
 	let cliargs = process_cmdline()?;
 
 	asyncgit::register_tracing_logging();
+	ensure_valid_path(&cliargs.repo_path)?;
 
-	if !valid_path(&cliargs.repo_path) {
-		eprintln!("invalid path\nplease run gitui inside of a non-bare git repository");
-		return Ok(());
-	}
-
-	let key_config = KeyConfig::init()
-		.map_err(|e| eprintln!("KeyConfig loading error: {e}"))
-		.unwrap_or_default();
+	let key_config = KeyConfig::init(
+		cliargs.key_bindings_path.as_ref(),
+		cliargs.key_symbols_path.as_ref(),
+	)
+	.map_err(|e| log_eprintln!("KeyConfig loading error: {e}"))
+	.unwrap_or_default();
 	let theme = Theme::init(&cliargs.theme);
 
 	setup_terminal()?;
@@ -139,11 +179,10 @@ fn main() -> Result<()> {
 		shutdown_terminal();
 	}
 
-	set_panic_handlers()?;
+	set_panic_handler()?;
 
-	let mut terminal = start_terminal(io::stdout())?;
-	let mut repo_path = cliargs.repo_path;
-	let input = Input::new();
+	let mut terminal =
+		start_terminal(io::stdout(), &cliargs.repo_path)?;
 
 	let updater = if cliargs.notify_watcher {
 		Updater::NotifyWatcher
@@ -151,20 +190,28 @@ fn main() -> Result<()> {
 		Updater::Ticker
 	};
 
+	let mut args = cliargs;
+
 	loop {
 		let quit_state = run_app(
 			app_start,
-			repo_path.clone(),
+			args.clone(),
 			theme.clone(),
-			key_config.clone(),
-			&input,
+			&key_config,
 			updater,
 			&mut terminal,
 		)?;
 
 		match quit_state {
 			QuitState::OpenSubmodule(p) => {
-				repo_path = p;
+				args = CliArgs {
+					repo_path: p,
+					select_file: None,
+					theme: args.theme,
+					notify_watcher: args.notify_watcher,
+					key_bindings_path: args.key_bindings_path,
+					key_symbols_path: args.key_symbols_path,
+				}
 			}
 			_ => break,
 		}
@@ -175,107 +222,17 @@ fn main() -> Result<()> {
 
 fn run_app(
 	app_start: Instant,
-	repo: RepoPath,
+	cliargs: CliArgs,
 	theme: Theme,
-	key_config: KeyConfig,
-	input: &Input,
+	key_config: &KeyConfig,
 	updater: Updater,
 	terminal: &mut Terminal,
 ) -> Result<QuitState, anyhow::Error> {
-	let (tx_git, rx_git) = unbounded();
-	let (tx_app, rx_app) = unbounded();
-
-	let rx_input = input.receiver();
-
-	let (rx_ticker, rx_watcher) = match updater {
-		Updater::NotifyWatcher => {
-			let repo_watcher =
-				RepoWatcher::new(repo_work_dir(&repo)?.as_str());
-
-			(never(), repo_watcher.receiver())
-		}
-		Updater::Ticker => (tick(TICK_INTERVAL), never()),
-	};
-
-	let spinner_ticker = tick(SPINNER_INTERVAL);
-
-	let mut app = App::new(
-		RefCell::new(repo),
-		tx_git,
-		tx_app,
-		input.clone(),
-		theme,
-		key_config,
-	)?;
-
-	let mut spinner = Spinner::default();
-	let mut first_update = true;
+	let mut gitui = Gitui::new(cliargs, theme, key_config, updater)?;
 
 	log::trace!("app start: {} ms", app_start.elapsed().as_millis());
 
-	loop {
-		let event = if first_update {
-			first_update = false;
-			QueueEvent::Notify
-		} else {
-			select_event(
-				&rx_input,
-				&rx_git,
-				&rx_app,
-				&rx_ticker,
-				&rx_watcher,
-				&spinner_ticker,
-			)?
-		};
-
-		{
-			if matches!(event, QueueEvent::SpinnerUpdate) {
-				spinner.update();
-				spinner.draw(terminal)?;
-				continue;
-			}
-
-			scope_time!("loop");
-
-			match event {
-				QueueEvent::InputEvent(ev) => {
-					if matches!(
-						ev,
-						InputEvent::State(InputState::Polling)
-					) {
-						//Note: external ed closed, we need to re-hide cursor
-						terminal.hide_cursor()?;
-					}
-					app.event(ev)?;
-				}
-				QueueEvent::Tick | QueueEvent::Notify => {
-					app.update()?;
-				}
-				QueueEvent::AsyncEvent(ev) => {
-					if !matches!(
-						ev,
-						AsyncNotification::Git(
-							AsyncGitNotification::FinishUnchanged
-						)
-					) {
-						app.update_async(ev)?;
-					}
-				}
-				QueueEvent::SpinnerUpdate => unreachable!(),
-			}
-
-			draw(terminal, &app)?;
-
-			spinner.set_state(app.any_work_pending());
-			spinner.draw(terminal)?;
-
-			if app.is_quit() {
-				break;
-			}
-		}
-	}
-
-	Ok(app.quit_state())
+	gitui.run_main_loop(terminal)
 }
 
 fn setup_terminal() -> Result<()> {
@@ -289,36 +246,41 @@ fn shutdown_terminal() {
 		io::stdout().execute(LeaveAlternateScreen).map(|_f| ());
 
 	if let Err(e) = leave_screen {
-		eprintln!("leave_screen failed:\n{e}");
+		log::error!("leave_screen failed:\n{e}");
 	}
 
 	let leave_raw_mode = disable_raw_mode();
 
 	if let Err(e) = leave_raw_mode {
-		eprintln!("leave_raw_mode failed:\n{e}");
+		log::error!("leave_raw_mode failed:\n{e}");
 	}
 }
 
-fn draw(terminal: &mut Terminal, app: &App) -> io::Result<()> {
+fn draw<B: ratatui::backend::Backend>(
+	terminal: &mut ratatui::Terminal<B>,
+	app: &App,
+) -> Result<(), B::Error> {
 	if app.requires_redraw() {
-		terminal.resize(terminal.size()?)?;
+		terminal.clear()?;
 	}
 
 	terminal.draw(|f| {
 		if let Err(e) = app.draw(f) {
-			log::error!("failed to draw: {:?}", e);
+			log::error!("failed to draw: {e:?}");
 		}
 	})?;
 
 	Ok(())
 }
 
-fn valid_path(repo_path: &RepoPath) -> bool {
-	let error = asyncgit::sync::repo_open_error(repo_path);
-	if let Some(error) = &error {
-		log::error!("repo open error: {error}");
+fn ensure_valid_path(repo_path: &RepoPath) -> Result<()> {
+	match asyncgit::sync::repo_open_error(repo_path) {
+		Some(e) => {
+			log::error!("invalid repo path: {e}");
+			bail!("invalid repo path: {e}")
+		}
+		None => Ok(()),
 	}
-	error.is_none()
 }
 
 fn select_event(
@@ -358,8 +320,27 @@ fn select_event(
 	Ok(ev)
 }
 
-fn start_terminal(buf: Stdout) -> io::Result<Terminal> {
-	let backend = CrosstermBackend::new(buf);
+fn start_terminal(
+	buf: Stdout,
+	repo_path: &RepoPath,
+) -> Result<Terminal> {
+	let mut path = repo_path.gitpath().canonicalize()?;
+	let home = dirs::home_dir().ok_or_else(|| {
+		anyhow!("failed to find the home directory")
+	})?;
+	if path.starts_with(&home) {
+		let relative_part = path
+			.strip_prefix(&home)
+			.expect("can't fail because of the if statement");
+		path = Path::new("~").join(relative_part);
+	}
+
+	let mut backend = CrosstermBackend::new(buf);
+	backend.execute(crossterm::terminal::SetTitle(format!(
+		"gitui ({})",
+		path.display()
+	)))?;
+
 	let mut terminal = Terminal::new(backend)?;
 	terminal.hide_cursor()?;
 	terminal.clear()?;
@@ -367,30 +348,15 @@ fn start_terminal(buf: Stdout) -> io::Result<Terminal> {
 	Ok(terminal)
 }
 
-// do log::error! and eprintln! in one line, pass string, error and backtrace
-macro_rules! log_eprintln {
-	($string:expr, $e:expr, $bt:expr) => {
-		log::error!($string, $e, $bt);
-		eprintln!($string, $e, $bt);
-	};
-}
-
-fn set_panic_handlers() -> Result<()> {
-	// regular panic handler
+fn set_panic_handler() -> Result<()> {
 	panic::set_hook(Box::new(|e| {
 		let backtrace = Backtrace::new();
 		shutdown_terminal();
-		log_eprintln!("\nGitUI was close due to an unexpected panic.\nPlease file an issue on https://github.com/extrawurst/gitui/issues with the following info:\n\n{:?}\ntrace:\n{:?}", e, backtrace);
+		log_eprintln!("\nGitUI was closed due to an unexpected panic.\nPlease file an issue on https://github.com/gitui-org/gitui/issues with the following info:\n\n{e}\n\ntrace:\n{backtrace:?}");
 	}));
 
 	// global threadpool
 	rayon_core::ThreadPoolBuilder::new()
-		.panic_handler(|e| {
-			let backtrace = Backtrace::new();
-			shutdown_terminal();
-			log_eprintln!("\nGitUI was close due to an unexpected panic.\nPlease file an issue on https://github.com/extrawurst/gitui/issues with the following info:\n\n{:?}\ntrace:\n{:?}", e, backtrace);
-			process::abort();
-		})
 		.num_threads(4)
 		.build_global()?;
 
