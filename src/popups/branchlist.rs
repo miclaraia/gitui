@@ -333,9 +333,9 @@ impl BranchListPopup {
 		match &self.sort_by {
 			BranchListSortBy::LastCommitAuthorAsc => {
 				self.branches.sort_by(|a, b| {
-					match b
+					match a
 						.top_commit_author
-						.cmp(&a.top_commit_author)
+						.cmp(&b.top_commit_author)
 					{
 						std::cmp::Ordering::Equal => {
 							a.name.cmp(&b.name)
@@ -346,9 +346,9 @@ impl BranchListPopup {
 			}
 			BranchListSortBy::LastCommitAuthorDesc => {
 				self.branches.sort_by(|a, b| {
-					match a
+					match b
 						.top_commit_author
-						.cmp(&b.top_commit_author)
+						.cmp(&a.top_commit_author)
 					{
 						std::cmp::Ordering::Equal => {
 							a.name.cmp(&b.name)

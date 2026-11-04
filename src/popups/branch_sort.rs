@@ -42,6 +42,7 @@ impl BranchSortPopup {
 
 	pub fn open(&mut self, sort_by: BranchListSortBy) -> Result<()> {
 		self.show()?;
+		self.selection = sort_by;
 		self.update_sort_key(sort_by);
 		Ok(())
 	}
@@ -63,7 +64,7 @@ impl BranchSortPopup {
 			.collect::<Vec<BranchListSortBy>>()[new_selection];
 	}
 
-	fn get_sort_key_lines(&self) -> Vec<Line> {
+	fn get_sort_key_lines(&self) -> Vec<Line<'_>> {
 		let texts = [
 			strings::sort_branch_by_name_msg(
 				self.selection.is_branch_name_asc(),
@@ -121,7 +122,7 @@ impl DrawableComponent for BranchSortPopup {
 				area,
 			);
 
-			area = area.inner(&Margin {
+			area = area.inner(Margin {
 				horizontal: 1,
 				vertical: 1,
 			});

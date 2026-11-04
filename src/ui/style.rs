@@ -1,7 +1,7 @@
 use crate::ui::syntax_text::DEFAULT_SYNTAX_THEME;
 use anyhow::Result;
 use asyncgit::{DiffLineType, StatusItemType};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style};
 use ron::ser::{to_string_pretty, PrettyConfig};
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Write, path::PathBuf, rc::Rc};

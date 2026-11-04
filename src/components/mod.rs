@@ -55,8 +55,7 @@ pub use commitlist::CommitList;
 pub use cred::CredComponent;
 pub use diff::DiffComponent;
 pub use revision_files::RevisionFilesComponent;
-use strum::EnumIter;
-use strum_macros::{EnumCount, EnumIs};
+use strum_macros::{EnumCount, EnumIs, EnumIter};
 pub use syntax_text::SyntaxTextComponent;
 pub use textinput::{InputType, TextInputComponent};
 pub use utils::{
